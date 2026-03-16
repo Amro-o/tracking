@@ -1,0 +1,23 @@
+[
+  {
+    "id": "322f2c3c-db63-49bc-934c-93f2cb75e5ac",
+    "teacherId": "b0e92188-7f54-450f-bf44-893acdacb94b",
+    "date": "2026-02-23",
+    "checkIn": "02:59:03",
+    "checkOut": "02:59:06"
+  },
+  {
+    "id": "bd2cea6e-db46-46f0-926c-d519fbd93357",
+    "teacherId": "b0e92188-7f54-450f-bf44-893acdacb94b",
+    "date": "2026-02-24",
+    "checkIn": "05:29:45",
+    "checkOut": "05:29:49"
+  },
+  {
+    "id": "ea261e16-c3c0-40a0-b38f-aaec92842d74",
+    "teacherId": "9b20d30b-d94e-4ab0-9f51-6572d760e397",
+    "date": "2026-02-24",
+    "checkIn": "11:09:02",
+    "checkOut": "11:09:04"
+  }
+]

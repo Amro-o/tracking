@@ -1,0 +1,29 @@
+[
+  {
+    "id": "08fd8576-d9d5-4d1d-b5c4-fee92f849124",
+    "date": "2026-02-23",
+    "classId": "5e01bee9-f652-401c-85a6-79842640d508",
+    "studentId": "45a19c57-3e59-45cb-b225-0d4bf588caae",
+    "status": "Present",
+    "notes": "",
+    "markedAt": "2026-02-23T23:58:15.250Z"
+  },
+  {
+    "id": "f3bf7614-a53e-4364-88cf-10a5d6244434",
+    "date": "2026-02-24",
+    "classId": "5e01bee9-f652-401c-85a6-79842640d508",
+    "studentId": "45a19c57-3e59-45cb-b225-0d4bf588caae",
+    "status": "Absent",
+    "notes": "",
+    "markedAt": "2026-02-24T23:42:26.075Z"
+  },
+  {
+    "id": "7fd99f1d-9582-4b79-9aa4-f82258a6867e",
+    "date": "2026-02-24",
+    "classId": "5e01bee9-f652-401c-85a6-79842640d508",
+    "studentId": "b0b339dc-9e25-4017-bfa0-7148b28b1212",
+    "status": "Absent",
+    "notes": "asdfghjkl",
+    "markedAt": "2026-02-24T23:42:26.075Z"
+  }
+]

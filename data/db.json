@@ -1,0 +1,813 @@
+{
+  "students": [
+    {
+      "name": "الحارث موسى اللكود",
+      "studentId": "",
+      "parentPhone": 502334737,
+      "birthday": "",
+      "classId": "mm27jgcqq8jd",
+      "id": "mm3iypukseq7"
+    },
+    {
+      "name": "إبراهيم عبد القادر سنيدان",
+      "studentId": "",
+      "parentPhone": 502620292,
+      "birthday": "",
+      "classId": "mm27jgcqq8jd",
+      "id": "mm3iypuk1imv"
+    },
+    {
+      "name": "أمين أحمد الحداد",
+      "studentId": "",
+      "parentPhone": 531399205,
+      "birthday": "",
+      "classId": "mm27jgcqq8jd",
+      "id": "mm3iypukq8ak"
+    },
+    {
+      "name": "سعد مسعد شملان",
+      "studentId": "",
+      "parentPhone": 552445319,
+      "birthday": "",
+      "classId": "mm27jgcqq8jd",
+      "id": "mm3iypuk078p"
+    },
+    {
+      "name": "عبد الرحمن عادل إبراهيم",
+      "studentId": "",
+      "parentPhone": 550414104,
+      "birthday": "",
+      "classId": "mm27jgcqq8jd",
+      "id": "mm3iypukyw1k"
+    },
+    {
+      "name": "عبد الرؤوف طاهر الشلبي",
+      "studentId": "",
+      "parentPhone": 506994330,
+      "birthday": "",
+      "classId": "mm27jgcqq8jd",
+      "id": "mm3iypukjwls"
+    },
+    {
+      "name": "عبد العزيز عبد الرحمن غيلان",
+      "studentId": "",
+      "parentPhone": 507314130,
+      "birthday": "",
+      "classId": "mm27jgcqq8jd",
+      "id": "mm3iypukwkod"
+    },
+    {
+      "name": "عمر زكريا فاروق",
+      "studentId": "",
+      "parentPhone": 563635140,
+      "birthday": "",
+      "classId": "mm27jgcqq8jd",
+      "id": "mm3iypuk8we1"
+    },
+    {
+      "name": "محمد أحمد دبو",
+      "studentId": "",
+      "parentPhone": 563751418,
+      "birthday": "",
+      "classId": "mm27jgcqq8jd",
+      "id": "mm3iypukhyst"
+    },
+    {
+      "name": "معاذ ماجد منصور",
+      "studentId": "",
+      "parentPhone": 561416167,
+      "birthday": "",
+      "classId": "mm27jgcqq8jd",
+      "id": "mm3iypukmg1b"
+    },
+    {
+      "name": "مهدي أحمد داود",
+      "studentId": "",
+      "parentPhone": 563751418,
+      "birthday": "",
+      "classId": "mm27jgcqq8jd",
+      "id": "mm3iypukkaox"
+    },
+    {
+      "name": "مهند ياسر ناجي",
+      "studentId": "",
+      "parentPhone": 537087767,
+      "birthday": "",
+      "classId": "mm27jgcqq8jd",
+      "id": "mm3iypuk7jeu"
+    },
+    {
+      "name": "موسى عبد القادر سنيدان",
+      "studentId": "",
+      "parentPhone": 502620292,
+      "birthday": "",
+      "classId": "mm27jgcqq8jd",
+      "id": "mm3iypuk23aw"
+    },
+    {
+      "name": "بلال محمد أحمد البريهي",
+      "studentId": "",
+      "parentPhone": 551968922,
+      "birthday": "",
+      "classId": "mm22tgmckavj",
+      "id": "mm3izfv21xwm"
+    },
+    {
+      "name": "ثامر عمار ردمان",
+      "studentId": "",
+      "parentPhone": 590817170,
+      "birthday": "",
+      "classId": "mm22tgmckavj",
+      "id": "mm3izfv2yh1a"
+    },
+    {
+      "name": "خالد بسام فوزي",
+      "studentId": "",
+      "parentPhone": 554665455,
+      "birthday": "",
+      "classId": "mm22tgmckavj",
+      "id": "mm3izfv2uyca"
+    },
+    {
+      "name": "خالد وقيف الله محمد",
+      "studentId": "",
+      "parentPhone": 593007315,
+      "birthday": "",
+      "classId": "mm22tgmckavj",
+      "id": "mm3izfv2uzlu"
+    },
+    {
+      "name": "سعود وقيف الله محمد",
+      "studentId": "",
+      "parentPhone": 593007315,
+      "birthday": "",
+      "classId": "mm22tgmckavj",
+      "id": "mm3izfv2hr73"
+    },
+    {
+      "name": "عبد الرحمن وحيد محمد",
+      "studentId": "",
+      "parentPhone": 509458836,
+      "birthday": "",
+      "classId": "mm22tgmckavj",
+      "id": "mm3izfv2osyf"
+    },
+    {
+      "name": "عبد الله ربيع سعيد",
+      "studentId": "",
+      "parentPhone": 569269638,
+      "birthday": "",
+      "classId": "mm22tgmckavj",
+      "id": "mm3izfv2tn0c"
+    },
+    {
+      "name": "علاء محمد الطيب",
+      "studentId": "",
+      "parentPhone": 537285912,
+      "birthday": "",
+      "classId": "mm22tgmckavj",
+      "id": "mm3izfv2py66"
+    },
+    {
+      "name": "علي عثمان علي",
+      "studentId": "",
+      "parentPhone": 569617820,
+      "birthday": "",
+      "classId": "mm22tgmckavj",
+      "id": "mm3izfv2gyi9"
+    },
+    {
+      "name": "عمر حسين رضا",
+      "studentId": "",
+      "parentPhone": 565028173,
+      "birthday": "",
+      "classId": "mm22tgmckavj",
+      "id": "mm3izfv2cpln"
+    },
+    {
+      "name": "غيث مهند بدر",
+      "studentId": "",
+      "parentPhone": 503430587,
+      "birthday": "",
+      "classId": "mm22tgmckavj",
+      "id": "mm3izfv2dl0t"
+    },
+    {
+      "name": "ليث مهند بدر",
+      "studentId": "",
+      "parentPhone": 593007315,
+      "birthday": "",
+      "classId": "mm22tgmckavj",
+      "id": "mm3izfv26dxc"
+    },
+    {
+      "name": "مراد محمد دبو",
+      "studentId": "",
+      "parentPhone": 508413677,
+      "birthday": "",
+      "classId": "mm22tgmckavj",
+      "id": "mm3izfv2u8ry"
+    },
+    {
+      "name": "نبيل نعمان هزاع",
+      "studentId": "",
+      "parentPhone": 562141463,
+      "birthday": "",
+      "classId": "mm22tgmckavj",
+      "id": "mm3izfv2yf33"
+    },
+    {
+      "name": "يوسف جمال حسين",
+      "studentId": "",
+      "parentPhone": 569787389,
+      "birthday": "",
+      "classId": "mm22tgmckavj",
+      "id": "mm3izfv2keh0"
+    },
+    {
+      "name": "يوسف رضا ناجي",
+      "studentId": "",
+      "parentPhone": 531589553,
+      "birthday": "",
+      "classId": "mm22tgmckavj",
+      "id": "mm3izfv2dzca"
+    },
+    {
+      "studentId": "1234567",
+      "name": "amro",
+      "birthday": "",
+      "parentPhone": "0563997080",
+      "classId": "mm27ot84jw17",
+      "id": "mm3kqua22j0h"
+    },
+    {
+      "studentId": "1234t5432",
+      "name": "dsds",
+      "birthday": "",
+      "parentPhone": "1234567654",
+      "classId": "mm27qwtn352n",
+      "id": "mm449ifcgxo4"
+    },
+    {
+      "studentId": "121212",
+      "name": "hossam zain",
+      "birthday": "",
+      "parentPhone": "0580408427",
+      "classId": "mm27mlol8n1i",
+      "id": "mm53dstfazer"
+    },
+    {
+      "studentId": "qefdv",
+      "name": "fdvfvds",
+      "birthday": "",
+      "parentPhone": "0546343941",
+      "classId": "mm27ot84jw17",
+      "id": "mm5ptfr39koe"
+    }
+  ],
+  "classes": [
+    {
+      "name": "حلقة الشيخ ابن عثيمين",
+      "grade": "ثانوي",
+      "room": "رشيد أحمد مولانا",
+      "id": "mm22tgmckavj"
+    },
+    {
+      "name": "حلقة الشيخ السعدي",
+      "grade": "ثانوي ومتخرج",
+      "room": "إبراهيم بن أحمد",
+      "id": "mm27jgcqq8jd"
+    },
+    {
+      "name": "حلقة الشيخ سعيد الحراملة",
+      "grade": "متوسط",
+      "room": "سعد بن محمد",
+      "id": "mm27kmykjvwy"
+    },
+    {
+      "name": "حلقة الشيخ سعد الحراملة",
+      "grade": "إبتدائي",
+      "room": "شاكر الله بخت",
+      "id": "mm27lh9qnnwv"
+    },
+    {
+      "name": "حلقة الشيخ الغشيان",
+      "grade": "إبتدائي",
+      "room": "نزر الإسلام عبد المجيد",
+      "id": "mm27mlol8n1i"
+    },
+    {
+      "name": "حلقة الشيخ صالح الغصون",
+      "grade": "إبتدائي",
+      "room": "سلمان بن محمد",
+      "id": "mm27nhgt9gre"
+    },
+    {
+      "name": "حلقة الشيخ آل فريان",
+      "grade": "متوسط",
+      "room": "عبد السلام قائد",
+      "id": "mm27ot84jw17"
+    },
+    {
+      "name": "حلقة الشيخ محمد بن عبد الوهاب",
+      "grade": "إبتدائي",
+      "room": "أحمد نزر الإسلام",
+      "id": "mm27qwtn352n"
+    }
+  ],
+  "teachers": [
+    {
+      "teacherId": "1234567",
+      "name": "مالك احمد",
+      "subject": "اداري",
+      "phone": "",
+      "id": "mm22vi48bzlh"
+    },
+    {
+      "teacherId": "2236161689",
+      "name": "يوسف سنيدان",
+      "subject": "اداري",
+      "phone": "0554053325",
+      "id": "mm27tb1xzlwq"
+    },
+    {
+      "teacherId": "1",
+      "name": "ابرهيم بن احمد",
+      "subject": "معلم",
+      "phone": "",
+      "id": "mm27xamahc4u"
+    },
+    {
+      "teacherId": "2",
+      "name": "رشيد مولانا",
+      "subject": "معلم",
+      "phone": "",
+      "id": "mm27xvihkz3k"
+    },
+    {
+      "teacherId": "3",
+      "name": "سعد بن محمد",
+      "subject": "معلم",
+      "phone": "",
+      "id": "mm27y8pmxcjl"
+    },
+    {
+      "teacherId": "4",
+      "name": "سلمان بن محمد",
+      "subject": "معلم",
+      "phone": "",
+      "id": "mm27yl0arnx5"
+    },
+    {
+      "teacherId": "1232",
+      "name": "3232",
+      "subject": "321232",
+      "phone": "",
+      "id": "mm4e6wvu8gex"
+    }
+  ],
+  "teacherLog": [],
+  "attendance": [
+    {
+      "id": "mm7v87p8pbn8",
+      "date": "2026-03-01",
+      "classId": "mm27ot84jw17",
+      "studentId": "mm3kqua22j0h",
+      "status": "Absent",
+      "notes": ""
+    },
+    {
+      "id": "mm7v87p8ky31",
+      "date": "2026-03-01",
+      "classId": "mm27ot84jw17",
+      "studentId": "mm5ptfr39koe",
+      "status": "Present",
+      "notes": ""
+    },
+    {
+      "id": "mmnolgbowqra",
+      "date": "2026-03-12",
+      "classId": "mm22tgmckavj",
+      "studentId": "mm3izfv21xwm",
+      "status": "Present",
+      "notes": ""
+    },
+    {
+      "id": "mmnolgbo89kj",
+      "date": "2026-03-12",
+      "classId": "mm22tgmckavj",
+      "studentId": "mm3izfv2yh1a",
+      "status": "Present",
+      "notes": ""
+    },
+    {
+      "id": "mmnolgboeu47",
+      "date": "2026-03-12",
+      "classId": "mm22tgmckavj",
+      "studentId": "mm3izfv2uyca",
+      "status": "Present",
+      "notes": ""
+    },
+    {
+      "id": "mmnolgbop5us",
+      "date": "2026-03-12",
+      "classId": "mm22tgmckavj",
+      "studentId": "mm3izfv2uzlu",
+      "status": "Present",
+      "notes": ""
+    },
+    {
+      "id": "mmnolgboseq8",
+      "date": "2026-03-12",
+      "classId": "mm22tgmckavj",
+      "studentId": "mm3izfv2hr73",
+      "status": "Present",
+      "notes": ""
+    },
+    {
+      "id": "mmnolgbo2mqy",
+      "date": "2026-03-12",
+      "classId": "mm22tgmckavj",
+      "studentId": "mm3izfv2osyf",
+      "status": "Present",
+      "notes": ""
+    },
+    {
+      "id": "mmnolgbory8m",
+      "date": "2026-03-12",
+      "classId": "mm22tgmckavj",
+      "studentId": "mm3izfv2tn0c",
+      "status": "Present",
+      "notes": ""
+    },
+    {
+      "id": "mmnolgbosxwv",
+      "date": "2026-03-12",
+      "classId": "mm22tgmckavj",
+      "studentId": "mm3izfv2py66",
+      "status": "Present",
+      "notes": ""
+    },
+    {
+      "id": "mmnolgbo5t9j",
+      "date": "2026-03-12",
+      "classId": "mm22tgmckavj",
+      "studentId": "mm3izfv2gyi9",
+      "status": "Present",
+      "notes": ""
+    },
+    {
+      "id": "mmnolgbo6h73",
+      "date": "2026-03-12",
+      "classId": "mm22tgmckavj",
+      "studentId": "mm3izfv2cpln",
+      "status": "Present",
+      "notes": ""
+    },
+    {
+      "id": "mmnolgbojz19",
+      "date": "2026-03-12",
+      "classId": "mm22tgmckavj",
+      "studentId": "mm3izfv2dl0t",
+      "status": "Present",
+      "notes": ""
+    },
+    {
+      "id": "mmnolgbo4zhe",
+      "date": "2026-03-12",
+      "classId": "mm22tgmckavj",
+      "studentId": "mm3izfv26dxc",
+      "status": "Present",
+      "notes": ""
+    },
+    {
+      "id": "mmnolgbogz4k",
+      "date": "2026-03-12",
+      "classId": "mm22tgmckavj",
+      "studentId": "mm3izfv2u8ry",
+      "status": "Present",
+      "notes": ""
+    },
+    {
+      "id": "mmnolgbordzi",
+      "date": "2026-03-12",
+      "classId": "mm22tgmckavj",
+      "studentId": "mm3izfv2yf33",
+      "status": "Present",
+      "notes": ""
+    },
+    {
+      "id": "mmnolgbol96b",
+      "date": "2026-03-12",
+      "classId": "mm22tgmckavj",
+      "studentId": "mm3izfv2keh0",
+      "status": "Present",
+      "notes": ""
+    },
+    {
+      "id": "mmnolgbopgnw",
+      "date": "2026-03-12",
+      "classId": "mm22tgmckavj",
+      "studentId": "mm3izfv2dzca",
+      "status": "Present",
+      "notes": ""
+    }
+  ],
+  "leaves": [],
+  "holidays": [
+    {
+      "date": "2026-04-02",
+      "type": "Weather",
+      "reason": "scsc",
+      "id": "mm5pxf7cg5mx"
+    }
+  ],
+  "settings": {
+    "pin": "2357",
+    "schoolName": "حضور الحلقات",
+    "subtitle": "",
+    "whatsappApiKey": "Vuz7gnph3tNp4pzbMQm5",
+    "adminPhone": "966563997080",
+    "whatsappTemplate": "السلام عليكم ورحمة الله وبركاته\n🚨🚨🚨🚨🚨\nالمكرم ولي أمر الطالب: {اسم_الطالب}\nنحيطكم علما بأن ابنكم قد تغيب اليوم {اليوم} الموافق {التاريخ} عن الحلقة بدون عذر مسبق، فنرجو منكم إفادتنا بسبب غيابه",
+    "logos": [
+      {
+        "id": "mm1fbpsz34go",
+        "url": "/uploads/mm1fbpsrfvb4_IMG-20260225-WA0001-removebg-preview-1.png",
+        "name": "IMG 20260225 WA0001 removebg preview 1"
+      }
+    ],
+    "dateFormat": {
+      "tokens": [
+        {
+          "key": "day",
+          "label": "اليوم",
+          "on": true
+        },
+        {
+          "key": "month",
+          "label": "الشهر",
+          "on": true
+        },
+        {
+          "key": "year",
+          "label": "السنة",
+          "on": true
+        }
+      ],
+      "sep": " - "
+    },
+    "telegramBotToken": "",
+    "telegramChatId": ""
+  },
+  "quranProgress": [],
+  "waGroups": [
+    {
+      "id": "mm3jmdsns00i",
+      "name": "اولياء امور",
+      "members": [
+        {
+          "name": "بلال محمد أحمد البريهي",
+          "phone": "551968922"
+        },
+        {
+          "name": "ثامر عمار ردمان",
+          "phone": "590817170"
+        },
+        {
+          "name": "خالد بسام فوزي",
+          "phone": "554665455"
+        },
+        {
+          "name": "خالد وقيف الله محمد",
+          "phone": "593007315"
+        },
+        {
+          "name": "سعود وقيف الله محمد",
+          "phone": "593007315"
+        },
+        {
+          "name": "عبد الرحمن وحيد محمد",
+          "phone": "509458836"
+        },
+        {
+          "name": "عبد الله ربيع سعيد",
+          "phone": "569269638"
+        },
+        {
+          "name": "علاء محمد الطيب",
+          "phone": "537285912"
+        },
+        {
+          "name": "علي عثمان علي",
+          "phone": "569617820"
+        },
+        {
+          "name": "عمر حسين رضا",
+          "phone": "565028173"
+        },
+        {
+          "name": "غيث مهند بدر",
+          "phone": "503430587"
+        },
+        {
+          "name": "ليث مهند بدر",
+          "phone": "593007315"
+        },
+        {
+          "name": "مراد محمد دبو",
+          "phone": "508413677"
+        },
+        {
+          "name": "نبيل نعمان هزاع",
+          "phone": "562141463"
+        },
+        {
+          "name": "يوسف جمال حسين",
+          "phone": "569787389"
+        },
+        {
+          "name": "يوسف رضا ناجي",
+          "phone": "531589553"
+        }
+      ],
+      "createdAt": "2026-02-26T14:12:57.047Z"
+    }
+  ],
+  "waLog": [
+    {
+      "id": "mm7v8b2t1fwy",
+      "type": "absence",
+      "date": "2026-03-01",
+      "studentId": "mm3kqua22j0h",
+      "studentName": "amro",
+      "phone": "0563997080",
+      "className": "حلقة الشيخ آل فريان",
+      "classId": "mm27ot84jw17",
+      "message": "السلام عليكم ورحمة الله وبركاته\n🚨🚨🚨🚨🚨\nالمكرم ولي أمر الطالب: amro\nنحيطكم علما بأن ابنكم قد تغيب اليوم الأحد الموافق 12 رمضان 1447هـ عن الحلقة بدون عذر مسبق، فنرجو منكم إفادتنا بسبب غيابه",
+      "status": "sent",
+      "sentAt": "2026-03-01T14:49:00.437Z",
+      "error": ""
+    },
+    {
+      "id": "mm7vewh1k1mq",
+      "type": "scheduled",
+      "eventId": "mm7veuescuuv",
+      "date": "2026-03-09",
+      "studentName": "0563997080",
+      "phone": "0563997080",
+      "className": "www",
+      "message": "wwwwwww",
+      "status": "scheduled",
+      "fonnteIds": [
+        145832257
+      ],
+      "sentAt": "2026-03-01T14:54:08.101Z",
+      "scheduledFor": "2026-03-09T06:00:00.000Z",
+      "error": ""
+    },
+    {
+      "id": "mm7vexaoij6z",
+      "type": "scheduled",
+      "eventId": "mm7veues0jt6",
+      "date": "2026-03-10",
+      "studentName": "0563997080",
+      "phone": "0563997080",
+      "className": "www",
+      "message": "wwwwwww",
+      "status": "scheduled",
+      "fonnteIds": [
+        145832259
+      ],
+      "sentAt": "2026-03-01T14:54:09.168Z",
+      "scheduledFor": "2026-03-10T06:00:00.000Z",
+      "error": ""
+    },
+    {
+      "id": "mm7veye19j28",
+      "type": "scheduled",
+      "eventId": "mm7veuesew3e",
+      "date": "2026-03-17",
+      "studentName": "0563997080",
+      "phone": "0563997080",
+      "className": "www",
+      "message": "wwwwwww",
+      "status": "scheduled",
+      "fonnteIds": [
+        145832260
+      ],
+      "sentAt": "2026-03-01T14:54:10.585Z",
+      "scheduledFor": "2026-03-17T06:00:00.000Z",
+      "error": ""
+    }
+  ],
+  "waDismissed": [],
+  "calendarEvents": [],
+  "waQueue": [],
+  "notices": [],
+  "accounts": [
+    {
+      "id": "admin",
+      "name": "amro",
+      "username": "admin",
+      "password": "0000",
+      "role": "admin",
+      "assignedClasses": []
+    },
+    {
+      "id": "mmlatk7n7vnh",
+      "name": "رشيد أحمد مولانا",
+      "username": "rashid",
+      "password": "0000",
+      "role": "teacher",
+      "assignedClasses": [
+        "mm22tgmckavj"
+      ]
+    },
+    {
+      "id": "mmlbk5xxxhjf",
+      "name": "إبراهيم بن أحمد",
+      "username": "ibrahim",
+      "password": "0000",
+      "role": "teacher",
+      "assignedClasses": [
+        "mm27jgcqq8jd"
+      ]
+    },
+    {
+      "id": "mmlbkuv8gvkp",
+      "name": "شاكر الله بخت",
+      "username": "shaker",
+      "password": "0000",
+      "role": "teacher",
+      "assignedClasses": [
+        "mm27lh9qnnwv"
+      ]
+    },
+    {
+      "id": "mmlbljlvzp01",
+      "name": "سعد بن محمد",
+      "username": "saed",
+      "password": "0000",
+      "role": "teacher",
+      "assignedClasses": [
+        "mm27kmykjvwy"
+      ]
+    },
+    {
+      "id": "mmlbmfblvh21",
+      "name": "نزر الإسلام عبد المجيد",
+      "username": "nzr",
+      "password": "0000",
+      "role": "teacher",
+      "assignedClasses": [
+        "mm27mlol8n1i"
+      ]
+    },
+    {
+      "id": "mmlbo8nk44qf",
+      "name": "سلمان بن محمد",
+      "username": "mohamed",
+      "password": "0000",
+      "role": "teacher",
+      "assignedClasses": [
+        "mm27nhgt9gre"
+      ]
+    },
+    {
+      "id": "mmlbozhvqngz",
+      "name": "عبدالسلام قائد",
+      "username": "kaed",
+      "password": "0000",
+      "role": "teacher",
+      "assignedClasses": [
+        "mm27ot84jw17"
+      ]
+    },
+    {
+      "id": "mmlbplpl18w7",
+      "name": "أحمد نزر الإسلام",
+      "username": "ahmed",
+      "password": "0000",
+      "role": "teacher",
+      "assignedClasses": [
+        "mm27qwtn352n"
+      ]
+    },
+    {
+      "id": "mmlbq8r9lbg0",
+      "name": "يوسف",
+      "username": "yousef",
+      "password": "0000",
+      "role": "moderator",
+      "assignedClasses": []
+    },
+    {
+      "id": "mmlbrpg3y52n",
+      "name": "مالك",
+      "username": "malik",
+      "password": "2357",
+      "role": "admin",
+      "assignedClasses": []
+    }
+  ]
+}
