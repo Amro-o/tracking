@@ -466,12 +466,8 @@
           <div class="err-msg">يرجى إدخال الحي</div>
         </div>
 
-        <div class="fg" id="fg_birthDate">
-          <label>تاريخ الميلاد <span class="req">*</span></label>
-          <input type="date" id="f_birthDate" max="" />
-          <div class="err-msg">يرجى إدخال تاريخ الميلاد</div>
-        </div>
-      </div>
+        <div class="custom-date-picker" id="calEventEndDate_wrap" data-id="calEventEndDate" data-onchange="updateHijriLabel(this,'calEventEndHijri');calUpdateDailyPreview()">
+  <input type="hidden" id="calEventEndDate" />
 
       <div class="form-row">
         <div class="fg" id="fg_grade">
