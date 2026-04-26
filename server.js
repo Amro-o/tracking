@@ -26,14 +26,10 @@ const PORT = process.env.PORT || 3000;
 
 // ── المسارات ─────────────────────────────────────────────
 const ROOT_DIR   = __dirname;
-const DATA_DIR   = process.env.DATA_DIR || path.join(ROOT_DIR, 'data');
-const DB_FILE    = path.join(DATA_DIR, 'db.json');
-const UPLOADS_DIR= path.join(DATA_DIR, 'uploads');
 const APP_DIR    = path.join(ROOT_DIR, 'app');   // للملفات الثابتة (index.html, app.js, styles.css)
 
-[DATA_DIR, UPLOADS_DIR].forEach(d => {
-  if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
-});
+// اسم bucket في Supabase Storage
+const STORAGE_BUCKET = 'uploads';
 
 // ── قاعدة البيانات الافتراضية ────────────────────────────
 const DEFAULT_DB = {
@@ -64,94 +60,65 @@ const DEFAULT_DB = {
 
 // ══════════════════════════════════════════════════════════════
 //  قاعدة البيانات — Supabase (PostgreSQL)
-//  نفس الواجهة القديمة تماماً: readDB / writeDB / writeKey / saveDB
-//  البيانات تُحمَّل في الذاكرة عند الإقلاع (سريع جداً)،
-//  وتُزامَن مع Supabase في الخلفية عند كل تعديل.
-//  المتغيرات المطلوبة: SUPABASE_URL و SUPABASE_ANON_KEY
+//  نفس الواجهة القديمة: readDB / writeDB / writeKey / saveDB
+//  البيانات تُحمَّل في الذاكرة عند الإقلاع، وتُزامَن مع Supabase
 // ══════════════════════════════════════════════════════════════
 const _supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_ANON_KEY
 );
 
-let _memCache = null; // الذاكرة المؤقتة — تُقرأ منها كل الطلبات
+let _memCache = null;
 
-// مزامنة كل البيانات مع Supabase (في الخلفية)
 async function _flushToDB(db) {
-  const rows = Object.entries(db).map(([key, value]) => ({
-    key,
-    value: JSON.stringify(value)
-  }));
-  const { error } = await _supabase
-    .from('store')
-    .upsert(rows, { onConflict: 'key' });
+  const rows = Object.entries(db).map(([key, value]) => ({ key, value: JSON.stringify(value) }));
+  const { error } = await _supabase.from('store').upsert(rows, { onConflict: 'key' });
   if (error) console.error('[DB] flush error:', error.message);
 }
 
-// تهيئة الذاكرة من Supabase عند إقلاع الخادم
 async function initDB() {
   if (!process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
-    throw new Error('SUPABASE_URL و SUPABASE_ANON_KEY غير مُعيَّنَين في متغيرات البيئة');
+    throw new Error('SUPABASE_URL و SUPABASE_ANON_KEY غير مُعيَّنَين');
   }
   const { data, error } = await _supabase.from('store').select('key, value');
   if (error) throw new Error('[DB] initDB failed: ' + error.message);
-
   if (!data || data.length === 0) {
-    // قاعدة بيانات جديدة فارغة — تهيئة بالقيم الافتراضية
     _memCache = JSON.parse(JSON.stringify(DEFAULT_DB));
     await _flushToDB(_memCache);
-    console.log('[DB] ✓ قاعدة بيانات جديدة — تم إنشاؤها في Supabase');
+    console.log('[DB] ✓ قاعدة بيانات جديدة');
   } else {
     _memCache = {};
     for (const row of data) {
-      try { _memCache[row.key] = JSON.parse(row.value); }
-      catch(e) { _memCache[row.key] = row.value; }
+      try { _memCache[row.key] = JSON.parse(row.value); } catch(e) { _memCache[row.key] = row.value; }
     }
-    // ضمان المفاتيح الافتراضية
-    Object.keys(DEFAULT_DB).forEach(k => {
-      if (_memCache[k] === undefined) _memCache[k] = DEFAULT_DB[k];
-    });
+    Object.keys(DEFAULT_DB).forEach(k => { if (_memCache[k] === undefined) _memCache[k] = DEFAULT_DB[k]; });
     Object.keys(DEFAULT_DB.settings).forEach(k => {
-      if (_memCache.settings[k] === undefined)
-        _memCache.settings[k] = DEFAULT_DB.settings[k];
+      if (_memCache.settings[k] === undefined) _memCache.settings[k] = DEFAULT_DB.settings[k];
     });
     if (!_memCache.settings.pin) _memCache.settings.pin = '1234';
     if (!_memCache.accounts) _memCache.accounts = [];
     if (!_memCache.accounts.find(a => a.role === 'admin')) {
-      _memCache.accounts.unshift({
-        id: 'admin', name: 'المدير', username: 'admin',
-        password: _memCache.settings.pin || '1234', role: 'admin', assignedClasses: []
-      });
+      _memCache.accounts.unshift({ id:'admin', name:'المدير', username:'admin', password:_memCache.settings.pin||'1234', role:'admin', assignedClasses:[] });
       await _flushToDB(_memCache);
     }
     console.log('[DB] ✓ تم تحميل البيانات من Supabase');
   }
 }
 
-// ── دوال قاعدة البيانات (متزامنة — تقرأ/تكتب من الذاكرة) ─────
-function readDB() {
-  return JSON.parse(JSON.stringify(_memCache));
-}
+function readDB() { return JSON.parse(JSON.stringify(_memCache)); }
 
 function writeDB(db) {
   _memCache = JSON.parse(JSON.stringify(db));
   _flushToDB(db).catch(e => console.error('[DB] writeDB error:', e.message));
 }
 
-// writeKey — كتابة مفتاح واحد فقط (أداء أفضل للعمليات الكبيرة)
 function writeKey(key, value) {
   _memCache[key] = JSON.parse(JSON.stringify(value));
-  _supabase
-    .from('store')
-    .upsert({ key, value: JSON.stringify(value) }, { onConflict: 'key' })
+  _supabase.from('store').upsert({ key, value: JSON.stringify(value) }, { onConflict: 'key' })
     .then(({ error }) => { if (error) console.error('[DB] writeKey error:', error.message); });
 }
 
-function saveDB(fn) {
-  const db = readDB();
-  fn(db);
-  writeDB(db);
-}
+function saveDB(fn) { const db = readDB(); fn(db); writeDB(db); }
 
 function newId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 
@@ -310,13 +277,13 @@ function dataCell(cell, value, isEven, alignH, isBold, fillOverride) {
 async function addLogoImage(wb, ws, totalCols, db) {
   const logoMeta = (db.settings?.logos||[])[0];
   if (!logoMeta?.url) return 3;
-  const logoPath = path.join(UPLOADS_DIR, path.basename(logoMeta.url));
-  if (!fs.existsSync(logoPath)) return 3;
   try {
-    const ext = path.extname(logoPath).replace('.','').toLowerCase();
+    const url = logoMeta.url;
+    const ext = (url.split('.').pop().split('?')[0] || '').toLowerCase();
     const imgType = ext==='jpg'?'jpeg':(ext==='png'?'png':null);
     if (!imgType) return 3;
-    const imgId = wb.addImage({base64:fs.readFileSync(logoPath).toString('base64'), extension:imgType});
+    const buffer = await fetchImageBuffer(url);
+    const imgId  = wb.addImage({ buffer, extension: imgType });
     ws.addImage(imgId, {tl:{col:0,row:0}, br:{col:2,row:2}, editAs:'oneCell'});
     ws.getRow(1).height = 35; ws.getRow(2).height = 35;
     return 2;
@@ -694,18 +661,57 @@ async function buildTeacherMonthlySheetGregorian(db, year, month) {
 }
 
 // ── Multer ───────────────────────────────────────────────
+// multer — ذاكرة مؤقتة فقط (لا كتابة على القرص)
 const upload = multer({
-  storage: multer.diskStorage({
-    destination: (_, __, cb) => cb(null, UPLOADS_DIR),
-    filename: (_, f, cb) => cb(null, `${newId()}_${f.originalname.replace(/[^\w.\-]/g,'_')}`)
-  }),
+  storage: multer.memoryStorage(),
   limits: { fileSize: 10*1024*1024 }
 });
+
+// ── رفع ملف إلى Supabase Storage ────────────────────────
+async function uploadToStorage(buffer, originalname, mimetype) {
+  const ext      = path.extname(originalname).replace(/[^\w.]/g,'') || 'bin';
+  const filename = `${newId()}_${originalname.replace(/[^\w.\-]/g,'_')}`;
+  const { data, error } = await _supabase.storage
+    .from(STORAGE_BUCKET)
+    .upload(filename, buffer, { contentType: mimetype, upsert: false });
+  if (error) throw new Error('Storage upload failed: ' + error.message);
+  const { data: pub } = _supabase.storage.from(STORAGE_BUCKET).getPublicUrl(filename);
+  return { filename, url: pub.publicUrl };
+}
+
+// ── حذف ملف من Supabase Storage ─────────────────────────
+async function deleteFromStorage(url) {
+  try {
+    // استخرج اسم الملف من الـ URL
+    const filename = url.split('/').pop().split('?')[0];
+    await _supabase.storage.from(STORAGE_BUCKET).remove([filename]);
+  } catch(e) {
+    console.warn('[Storage] delete warning:', e.message);
+  }
+}
+
+// ── جلب صورة من URL كـ buffer (للاستخدام في Excel/PDF) ──
+async function fetchImageBuffer(url) {
+  return new Promise((resolve, reject) => {
+    const mod = url.startsWith('https') ? require('https') : require('http');
+    mod.get(url, res => {
+      const chunks = [];
+      res.on('data', c => chunks.push(c));
+      res.on('end', () => resolve(Buffer.concat(chunks)));
+      res.on('error', reject);
+    }).on('error', reject);
+  });
+}
 
 // ── Middleware ───────────────────────────────────────────
 app.use(express.json({ limit:'10mb' }));
 app.use(express.urlencoded({ extended:true }));
-app.use('/uploads', express.static(UPLOADS_DIR));
+
+// مسار /uploads يُعيد توجيه إلى Supabase Storage مباشرة
+app.get('/uploads/:filename', (req, res) => {
+  const { data } = _supabase.storage.from(STORAGE_BUCKET).getPublicUrl(req.params.filename);
+  res.redirect(data.publicUrl);
+});
 
 // خدمة الملفات الثابتة: أولاً app/ ثم المجلد الجذر
 if (fs.existsSync(APP_DIR)) app.use(express.static(APP_DIR));
@@ -1131,17 +1137,15 @@ app.post('/api/students/import-preview', upload.single('file'), (req, res) => {
     const ext = path.extname(req.file.originalname || '').toLowerCase();
     let wb;
     if (ext === '.csv') {
-      const content = fs.readFileSync(req.file.path, 'utf8');
+      const content = req.file.buffer.toString('utf8');
       wb = XLSX.read(content, { type:'string' });
     } else {
-      wb = XLSX.readFile(req.file.path);
+      wb = XLSX.read(req.file.buffer, { type:'buffer' });
     }
     const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval:'' });
-    try { fs.unlinkSync(req.file.path); } catch(e){}
     if (!rows.length) return res.json({ ok:false, error:'الملف فارغ أو لا يحتوي على بيانات' });
     res.json({ ok:true, headers:Object.keys(rows[0]), rows:rows.slice(0,100), total:rows.length });
   } catch(e) {
-    try { if (req.file && req.file.path) fs.unlinkSync(req.file.path); } catch(_){}
     res.json({ ok:false, error:'خطأ في قراءة الملف: ' + e.message });
   }
 });
@@ -1190,11 +1194,15 @@ app.get('/api/students/:id', (req, res) => {
   res.json({ ...s, history, leaves, notices });
 });
 
-app.post('/api/students/:id/photo', upload.single('photo'), (req, res) => {
+app.post('/api/students/:id/photo', upload.single('photo'), async (req, res) => {
   if (!req.file) return res.json({ ok:false });
-  const url = `/uploads/${req.file.filename}`;
-  saveDB(db => { const i=db.students.findIndex(s=>s.id===req.params.id); if(i>=0) db.students[i].photo=url; });
-  res.json({ ok:true, url });
+  try {
+    const { url } = await uploadToStorage(req.file.buffer, req.file.originalname, req.file.mimetype);
+    saveDB(db => { const i=db.students.findIndex(s=>s.id===req.params.id); if(i>=0) db.students[i].photo=url; });
+    res.json({ ok:true, url });
+  } catch(e) {
+    res.json({ ok:false, error: e.message });
+  }
 });
 
 
@@ -1544,23 +1552,29 @@ app.put('/api/settings', (req, res) => {
 });
 
 // رفع شعار
-app.post('/api/settings/logos', upload.single('logo'), (req, res) => {
+app.post('/api/settings/logos', upload.single('logo'), async (req, res) => {
   if (!req.file) return res.status(400).json({ok:false, error:'لم يتم رفع ملف'});
-  const url  = `/uploads/${req.file.filename}`;
-  const name = req.body.name || req.file.originalname;
-  const id   = newId();
-  saveDB(db => { if (!db.settings.logos) db.settings.logos=[]; db.settings.logos.push({id,url,name}); });
-  res.json({ok:true, id, url});
+  try {
+    const { url } = await uploadToStorage(req.file.buffer, req.file.originalname, req.file.mimetype);
+    const name = req.body.name || req.file.originalname;
+    const id   = newId();
+    saveDB(db => { if (!db.settings.logos) db.settings.logos=[]; db.settings.logos.push({id,url,name}); });
+    res.json({ok:true, id, url});
+  } catch(e) {
+    res.json({ok:false, error: e.message});
+  }
 });
 
 // حذف شعار
-app.delete('/api/settings/logos/:id', (req, res) => {
+app.delete('/api/settings/logos/:id', async (req, res) => {
+  let logoUrl = null;
   saveDB(db => {
     if (!db.settings.logos) return;
     const logo = db.settings.logos.find(l=>l.id===req.params.id);
-    if (logo?.url) { try { fs.unlinkSync(path.join(UPLOADS_DIR, path.basename(logo.url))); } catch(e){} }
+    if (logo?.url) logoUrl = logo.url;
     db.settings.logos = db.settings.logos.filter(l=>l.id!==req.params.id);
   });
+  if (logoUrl) await deleteFromStorage(logoUrl);
   res.json({ok:true});
 });
 
@@ -3930,7 +3944,6 @@ setInterval(async () => {
   }
 }, 60 * 1000); // every 60 seconds
 
-// تشغيل الخادم بعد تهيئة قاعدة البيانات من Supabase
 initDB().then(() => {
   app.listen(PORT, '0.0.0.0', () => {
     const ip = getLocalIP();
@@ -3941,7 +3954,7 @@ initDB().then(() => {
     console.log(`╚══════════════════════════════════════════╝\n`);
   });
 }).catch(err => {
-  console.error('[DB] ✗ فشل الاتصال بـ Supabase — توقف الخادم:', err.message);
+  console.error('[DB] ✗ فشل الاتصال بـ Supabase:', err.message);
   process.exit(1);
 });
 
