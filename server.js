@@ -9,7 +9,7 @@
 const express    = require('express');
 const path       = require('path');
 const fs         = require('fs');
-const Database   = require('better-sqlite3');
+const { createClient } = require('@supabase/supabase-js');
 let XLSX; try { XLSX = require('xlsx-js-style'); } catch(e) { XLSX = require('xlsx'); }
 const ExcelJS = require('exceljs');
 const PDFDocument= require('pdfkit');
@@ -63,88 +63,88 @@ const DEFAULT_DB = {
 };
 
 // ══════════════════════════════════════════════════════════════
-//  قاعدة البيانات — SQLite عبر better-sqlite3
-//  API مطابق للسابق (readDB / writeDB / saveDB) — لا تغيير في
-//  بقية الكود. كل مفتاح رئيسي (students, attendance, …) يُخزَّن
-//  كصف منفصل في جدول store → كتابة ذرية، آمنة من التلف.
-//  عند أول تشغيل: إن وُجد db.json قديم يُهاجر تلقائياً ثم يُعاد
-//  تسميته db.json.migrated (يبقى كنسخة احتياطية).
+//  قاعدة البيانات — Supabase (PostgreSQL)
+//  نفس الواجهة القديمة تماماً: readDB / writeDB / writeKey / saveDB
+//  البيانات تُحمَّل في الذاكرة عند الإقلاع (سريع جداً)،
+//  وتُزامَن مع Supabase في الخلفية عند كل تعديل.
+//  المتغيرات المطلوبة: SUPABASE_URL و SUPABASE_ANON_KEY
 // ══════════════════════════════════════════════════════════════
-const DB_SQLITE = path.join(DATA_DIR, 'db.sqlite');
+const _supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_ANON_KEY
+);
 
-// فتح / إنشاء ملف SQLite
-const _db = new Database(DB_SQLITE);
-_db.pragma('journal_mode = WAL');   // كتابات متزامنة آمنة
-_db.pragma('synchronous = NORMAL'); // أداء جيد مع أمان كافٍ
-_db.exec(`
-  CREATE TABLE IF NOT EXISTS store (
-    key   TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-  );
-`);
+let _memCache = null; // الذاكرة المؤقتة — تُقرأ منها كل الطلبات
 
-// ── هجرة من db.json القديم (مرة واحدة فقط) ─────────────────
-(function _migrateFromJson() {
-  const count = _db.prepare('SELECT COUNT(*) as n FROM store').get().n;
-  if (count === 0 && fs.existsSync(DB_FILE)) {
-    try {
-      const old = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-      const ins = _db.prepare('INSERT OR REPLACE INTO store (key, value) VALUES (?, ?)');
-      _db.transaction(data => {
-        for (const [k, v] of Object.entries(data)) ins.run(k, JSON.stringify(v));
-      })(old);
-      fs.renameSync(DB_FILE, DB_FILE + '.migrated');
-      console.log('[DB] ✓ تمت الهجرة من db.json → SQLite، الملف القديم: db.json.migrated');
-    } catch (e) {
-      console.error('[DB] ✗ فشل الهجرة:', e.message);
-    }
+// مزامنة كل البيانات مع Supabase (في الخلفية)
+async function _flushToDB(db) {
+  const rows = Object.entries(db).map(([key, value]) => ({
+    key,
+    value: JSON.stringify(value)
+  }));
+  const { error } = await _supabase
+    .from('store')
+    .upsert(rows, { onConflict: 'key' });
+  if (error) console.error('[DB] flush error:', error.message);
+}
+
+// تهيئة الذاكرة من Supabase عند إقلاع الخادم
+async function initDB() {
+  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
+    throw new Error('SUPABASE_URL و SUPABASE_ANON_KEY غير مُعيَّنَين في متغيرات البيئة');
   }
-})();
+  const { data, error } = await _supabase.from('store').select('key, value');
+  if (error) throw new Error('[DB] initDB failed: ' + error.message);
 
-// ── دوال قاعدة البيانات ──────────────────────────────────────
-function readDB() {
-  try {
-    const rows = _db.prepare('SELECT key, value FROM store').all();
-    if (!rows.length) {
-      const fresh = JSON.parse(JSON.stringify(DEFAULT_DB));
-      writeDB(fresh);
-      return fresh;
-    }
-    const db = {};
-    for (const row of rows) {
-      try { db[row.key] = JSON.parse(row.value); } catch(e) { db[row.key] = row.value; }
+  if (!data || data.length === 0) {
+    // قاعدة بيانات جديدة فارغة — تهيئة بالقيم الافتراضية
+    _memCache = JSON.parse(JSON.stringify(DEFAULT_DB));
+    await _flushToDB(_memCache);
+    console.log('[DB] ✓ قاعدة بيانات جديدة — تم إنشاؤها في Supabase');
+  } else {
+    _memCache = {};
+    for (const row of data) {
+      try { _memCache[row.key] = JSON.parse(row.value); }
+      catch(e) { _memCache[row.key] = row.value; }
     }
     // ضمان المفاتيح الافتراضية
-    Object.keys(DEFAULT_DB).forEach(k => { if (db[k] === undefined) db[k] = DEFAULT_DB[k]; });
-    Object.keys(DEFAULT_DB.settings).forEach(k => {
-      if (db.settings[k] === undefined) db.settings[k] = DEFAULT_DB.settings[k];
+    Object.keys(DEFAULT_DB).forEach(k => {
+      if (_memCache[k] === undefined) _memCache[k] = DEFAULT_DB[k];
     });
-    if (!db.settings.pin) db.settings.pin = '1234';
-    if (!db.accounts) db.accounts = [];
-    if (!db.accounts.find(a => a.role === 'admin')) {
-      db.accounts.unshift({
+    Object.keys(DEFAULT_DB.settings).forEach(k => {
+      if (_memCache.settings[k] === undefined)
+        _memCache.settings[k] = DEFAULT_DB.settings[k];
+    });
+    if (!_memCache.settings.pin) _memCache.settings.pin = '1234';
+    if (!_memCache.accounts) _memCache.accounts = [];
+    if (!_memCache.accounts.find(a => a.role === 'admin')) {
+      _memCache.accounts.unshift({
         id: 'admin', name: 'المدير', username: 'admin',
-        password: db.settings.pin || '1234', role: 'admin', assignedClasses: []
+        password: _memCache.settings.pin || '1234', role: 'admin', assignedClasses: []
       });
-      writeDB(db);
+      await _flushToDB(_memCache);
     }
-    return db;
-  } catch(e) {
-    console.error('[DB] readDB error:', e.message);
-    return JSON.parse(JSON.stringify(DEFAULT_DB));
+    console.log('[DB] ✓ تم تحميل البيانات من Supabase');
   }
 }
 
+// ── دوال قاعدة البيانات (متزامنة — تقرأ/تكتب من الذاكرة) ─────
+function readDB() {
+  return JSON.parse(JSON.stringify(_memCache));
+}
+
 function writeDB(db) {
-  const ins = _db.prepare('INSERT OR REPLACE INTO store (key, value) VALUES (?, ?)');
-  _db.transaction(data => {
-    for (const [k, v] of Object.entries(data)) ins.run(k, JSON.stringify(v));
-  })(db);
+  _memCache = JSON.parse(JSON.stringify(db));
+  _flushToDB(db).catch(e => console.error('[DB] writeDB error:', e.message));
 }
 
 // writeKey — كتابة مفتاح واحد فقط (أداء أفضل للعمليات الكبيرة)
 function writeKey(key, value) {
-  _db.prepare('INSERT OR REPLACE INTO store (key, value) VALUES (?, ?)').run(key, JSON.stringify(value));
+  _memCache[key] = JSON.parse(JSON.stringify(value));
+  _supabase
+    .from('store')
+    .upsert({ key, value: JSON.stringify(value) }, { onConflict: 'key' })
+    .then(({ error }) => { if (error) console.error('[DB] writeKey error:', error.message); });
 }
 
 function saveDB(fn) {
@@ -3930,13 +3930,19 @@ setInterval(async () => {
   }
 }, 60 * 1000); // every 60 seconds
 
-app.listen(PORT, '0.0.0.0', () => {
-  const ip = getLocalIP();
-  console.log(`\n╔══════════════════════════════════════════╗`);
-  console.log(`║  ✅حلقات مجمع الخير — جاهز للعمل            ║`);
-  console.log(`║  http://localhost:${PORT}                    ║`);
-  console.log(`║  📱 شبكة محلية: http://${ip}:${PORT}  ║`);
-  console.log(`╚══════════════════════════════════════════╝\n`);
+// تشغيل الخادم بعد تهيئة قاعدة البيانات من Supabase
+initDB().then(() => {
+  app.listen(PORT, '0.0.0.0', () => {
+    const ip = getLocalIP();
+    console.log(`\n╔══════════════════════════════════════════╗`);
+    console.log(`║  ✅حلقات مجمع الخير — جاهز للعمل            ║`);
+    console.log(`║  http://localhost:${PORT}                    ║`);
+    console.log(`║  📱 شبكة محلية: http://${ip}:${PORT}  ║`);
+    console.log(`╚══════════════════════════════════════════╝\n`);
+  });
+}).catch(err => {
+  console.error('[DB] ✗ فشل الاتصال بـ Supabase — توقف الخادم:', err.message);
+  process.exit(1);
 });
 
 process.on('uncaughtException',     e => console.error('[CRASH] uncaughtException:', e));
