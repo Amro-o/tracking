@@ -167,15 +167,16 @@ function saveDB(fn) {
 function newId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 
 // ── التوقيت المحلي (مع دعم المنطقة الزمنية) ─────────────
-// اضبط TIMEZONE_OFFSET=3 في Render إذا كنت في السعودية (UTC+3)
-// أو اضبط TZ=Asia/Riyadh في متغيرات البيئة
-function _localNow() {
-  const offset = parseInt(process.env.TIMEZONE_OFFSET || '0', 10);
-  if (offset === 0) return new Date();
-  return new Date(Date.now() + offset * 60 * 60 * 1000);
+// يستخدم Intl.DateTimeFormat لضمان الحصول على التوقيت الصحيح
+// بغض النظر عن توقيت الخادم — toISOString() دائماً UTC.
+// المنطقة الزمنية الافتراضية: Asia/Riyadh (يمكن تغييرها عبر TZ_NAME)
+const _TZ = process.env.TZ_NAME || 'Asia/Riyadh';
+function nowDate() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: _TZ });
 }
-function nowDate() { return _localNow().toISOString().slice(0, 10); }
-function nowTime() { return _localNow().toISOString().slice(11, 16); }
+function nowTime() {
+  return new Date().toLocaleTimeString('en-GB', { timeZone: _TZ, hour: '2-digit', minute: '2-digit' });
+}
 
 // ── IP الشبكة المحلية ────────────────────────────────────
 function getLocalIP() {
@@ -3290,9 +3291,10 @@ app.get('/api/teacher-log/today-summary', (_, res) => {
 // ════════════════════════════════════════════════════════
 app.get('/api/sync/export', (_, res) => {
   const db = readDB();
+  const filename = `backup_${nowDate()}_${nowTime().replace(':','-')}.json`;
   res.setHeader('Content-Type','application/json');
-  res.setHeader('Content-Disposition',`attachment; filename="backup_${new Date().toISOString().split('T')[0]}.json"`);
-  res.json({...db, exportedAt:new Date().toISOString(), version:3});
+  res.setHeader('Content-Disposition',`attachment; filename="${filename}"`);
+  res.json({...db, exportedAt: new Date().toISOString(), version:3});
 });
 
 // دمج بيانات من bundle في قاعدة البيانات
@@ -3356,6 +3358,94 @@ app.post('/api/sync/import-file', upload.single('file'), (req, res) => {
     }
     const merged = _mergeBundle(bundle);
     res.json({ ok: true, merged });
+  } catch(e) {
+    res.json({ ok: false, error: 'خطأ في قراءة الملف: ' + e.message });
+  }
+});
+
+// استعادة كاملة — يستبدل قاعدة البيانات بالكامل (لا دمج)
+app.post('/api/backup/restore', upload.single('file'), (req, res) => {
+  if (!req.file) return res.json({ ok: false, error: 'لم يتم استلام الملف' });
+  try {
+    let content;
+    if (req.file.buffer) {
+      content = req.file.buffer.toString('utf8').replace(/^\uFEFF/, '');
+    } else {
+      content = fs.readFileSync(req.file.path, 'utf8').replace(/^\uFEFF/, '');
+      try { fs.unlinkSync(req.file.path); } catch(_) {}
+    }
+    const bundle = JSON.parse(content);
+    if (typeof bundle !== 'object' || Array.isArray(bundle)) {
+      return res.json({ ok: false, error: 'ملف غير صالح' });
+    }
+    // Remove metadata fields before restoring
+    const { exportedAt, version, ...data } = bundle;
+    // Merge with defaults to ensure all keys exist
+    const restored = { ...JSON.parse(JSON.stringify(DEFAULT_DB)), ...data };
+    writeDB(restored);
+    res.json({ ok: true });
+  } catch(e) {
+    res.json({ ok: false, error: 'خطأ في قراءة الملف: ' + e.message });
+  }
+});
+
+// استيراد ملف CSV من Supabase (عمودان: key, value)
+app.post('/api/backup/restore-csv', upload.single('file'), (req, res) => {
+  if (!req.file) return res.json({ ok: false, error: 'لم يتم استلام الملف' });
+  try {
+    let content;
+    if (req.file.buffer) {
+      content = req.file.buffer.toString('utf8').replace(/^\uFEFF/, '');
+    } else {
+      content = fs.readFileSync(req.file.path, 'utf8').replace(/^\uFEFF/, '');
+      try { fs.unlinkSync(req.file.path); } catch(_) {}
+    }
+    // Parse CSV — handles quoted fields that may contain commas
+    const lines = content.split(/\r?\n/).filter(l => l.trim());
+    if (!lines.length) return res.json({ ok: false, error: 'الملف فارغ' });
+
+    // Detect header row and find key/value column indices
+    function parseCsvLine(line) {
+      const cols = [];
+      let cur = '', inQ = false;
+      for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (ch === '"') {
+          if (inQ && line[i+1] === '"') { cur += '"'; i++; }
+          else inQ = !inQ;
+        } else if (ch === ',' && !inQ) {
+          cols.push(cur); cur = '';
+        } else {
+          cur += ch;
+        }
+      }
+      cols.push(cur);
+      return cols;
+    }
+
+    const header = parseCsvLine(lines[0]).map(h => h.trim().toLowerCase());
+    const keyIdx = header.indexOf('key');
+    const valIdx = header.indexOf('value');
+    if (keyIdx === -1 || valIdx === -1) {
+      return res.json({ ok: false, error: 'لم يتم العثور على عمودَي key و value في الملف' });
+    }
+
+    const bundle = {};
+    for (let i = 1; i < lines.length; i++) {
+      const cols = parseCsvLine(lines[i]);
+      const key  = (cols[keyIdx] || '').trim();
+      const val  = (cols[valIdx] || '').trim();
+      if (!key) continue;
+      try { bundle[key] = JSON.parse(val); } catch(_) { bundle[key] = val; }
+    }
+
+    if (!Object.keys(bundle).length) {
+      return res.json({ ok: false, error: 'لم يتم قراءة أي بيانات من الملف' });
+    }
+
+    const restored = { ...JSON.parse(JSON.stringify(DEFAULT_DB)), ...bundle };
+    writeDB(restored);
+    res.json({ ok: true, keys: Object.keys(bundle).length });
   } catch(e) {
     res.json({ ok: false, error: 'خطأ في قراءة الملف: ' + e.message });
   }
