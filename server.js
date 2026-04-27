@@ -9,7 +9,6 @@
 const express    = require('express');
 const path       = require('path');
 const fs         = require('fs');
-const Database   = require('better-sqlite3');
 let XLSX; try { XLSX = require('xlsx-js-style'); } catch(e) { XLSX = require('xlsx'); }
 const ExcelJS = require('exceljs');
 const PDFDocument= require('pdfkit');
