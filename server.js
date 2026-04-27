@@ -9,13 +9,15 @@
 const express    = require('express');
 const path       = require('path');
 const fs         = require('fs');
-const Database   = require('better-sqlite3'); // ✅ إصلاح: كانت مفقودة وتسبب في تعطل الخادم
 let XLSX; try { XLSX = require('xlsx-js-style'); } catch(e) { XLSX = require('xlsx'); }
 const ExcelJS = require('exceljs');
 const PDFDocument= require('pdfkit');
 const multer     = require('multer');
 const https      = require('https');
 const os         = require('os');
+
+const { createClient } = require('@supabase/supabase-js');
+let compression; try { compression = require('compression'); } catch(e) { compression = null; }
 
 // اختياري: مكتبة QR
 let QRCode;
@@ -63,133 +65,125 @@ const DEFAULT_DB = {
 };
 
 // ══════════════════════════════════════════════════════════════
-//  قاعدة البيانات — SQLite عبر better-sqlite3
-//  API مطابق للسابق (readDB / writeDB / saveDB) — لا تغيير في
-//  بقية الكود. كل مفتاح رئيسي (students, attendance, …) يُخزَّن
-//  كصف منفصل في جدول store → كتابة ذرية، آمنة من التلف.
-//  عند أول تشغيل: إن وُجد db.json قديم يُهاجر تلقائياً ثم يُعاد
-//  تسميته db.json.migrated (يبقى كنسخة احتياطية).
+//  قاعدة البيانات — Supabase
+//  نفس API السابق (readDB / writeDB / saveDB / writeKey) بدون
+//  أي تغيير في بقية الكود.
+//  البيانات تُخزَّن في جدول Supabase: store(key TEXT PK, value TEXT)
+//  يُحمَّل الجدول كاملاً في الذاكرة عند بدء التشغيل (_cache)،
+//  وكل كتابة تُحدِّث الذاكرة فوراً ثم تُزامَن مع Supabase بشكل
+//  غير متزامن — لا يتأثر أداء الطلبات.
+//
+//  متغيرات البيئة المطلوبة في Render:
+//    SUPABASE_URL  — رابط مشروع Supabase
+//    SUPABASE_KEY  — service_role key (ليس anon key)
+//
+//  أنشئ الجدول مرة واحدة في Supabase SQL Editor:
+//    CREATE TABLE IF NOT EXISTS store (
+//      key   TEXT PRIMARY KEY,
+//      value TEXT NOT NULL
+//    );
 // ══════════════════════════════════════════════════════════════
-const DB_SQLITE = path.join(DATA_DIR, 'db.sqlite');
 
-// فتح / إنشاء ملف SQLite
-const _db = new Database(DB_SQLITE);
-_db.pragma('journal_mode = WAL');   // كتابات متزامنة آمنة
-_db.pragma('synchronous = NORMAL'); // أداء جيد مع أمان كافٍ
-_db.exec(`
-  CREATE TABLE IF NOT EXISTS store (
-    key   TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-  );
-`);
+const _supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_KEY
+);
 
-// ── هجرة من db.json القديم (مرة واحدة فقط) ─────────────────
-(function _migrateFromJson() {
-  const count = _db.prepare('SELECT COUNT(*) as n FROM store').get().n;
-  if (count === 0 && fs.existsSync(DB_FILE)) {
-    try {
-      const old = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-      const ins = _db.prepare('INSERT OR REPLACE INTO store (key, value) VALUES (?, ?)');
-      _db.transaction(data => {
-        for (const [k, v] of Object.entries(data)) ins.run(k, JSON.stringify(v));
-      })(old);
-      fs.renameSync(DB_FILE, DB_FILE + '.migrated');
-      console.log('[DB] ✓ تمت الهجرة من db.json → SQLite، الملف القديم: db.json.migrated');
-    } catch (e) {
-      console.error('[DB] ✗ فشل الهجرة:', e.message);
-    }
-  }
-})();
+// ── ذاكرة التخزين المؤقت (تُملأ عند بدء التشغيل) ───────────
+let _cache = null;
 
-// ── دوال قاعدة البيانات ──────────────────────────────────────
-function readDB() {
-  // استخدام الكاش إذا كان حديثاً
-  if (_dbCache && (Date.now() - _dbCacheTime) < _DB_CACHE_TTL) return _dbCache;
-  try {
-    const rows = _db.prepare('SELECT key, value FROM store').all();
-    if (!rows.length) {
-      const fresh = JSON.parse(JSON.stringify(DEFAULT_DB));
-      writeDB(fresh);
-      return fresh;
-    }
-    const db = {};
-    for (const row of rows) {
-      try { db[row.key] = JSON.parse(row.value); } catch(e) { db[row.key] = row.value; }
+// ── تهيئة الكاش من Supabase ─────────────────────────────────
+async function _initCache() {
+  const { data, error } = await _supabase.from('store').select('key, value');
+  if (error) throw new Error('[DB] Supabase init error: ' + error.message);
+
+  if (!data || data.length === 0) {
+    // قاعدة بيانات جديدة — اكتب القيم الافتراضية
+    _cache = JSON.parse(JSON.stringify(DEFAULT_DB));
+    await _supabaseWriteAll(_cache);
+    console.log('[DB] ✓ قاعدة بيانات جديدة أُنشئت في Supabase');
+  } else {
+    _cache = {};
+    for (const row of data) {
+      try { _cache[row.key] = JSON.parse(row.value); } catch(e) { _cache[row.key] = row.value; }
     }
     // ضمان المفاتيح الافتراضية
-    Object.keys(DEFAULT_DB).forEach(k => { if (db[k] === undefined) db[k] = DEFAULT_DB[k]; });
-    Object.keys(DEFAULT_DB.settings).forEach(k => {
-      if (db.settings[k] === undefined) db.settings[k] = DEFAULT_DB.settings[k];
-    });
-    if (!db.settings.pin) db.settings.pin = '1234';
-    if (!db.accounts) db.accounts = [];
-    if (!db.accounts.find(a => a.role === 'admin')) {
-      db.accounts.unshift({
-        id: 'admin', name: 'المدير', username: 'admin',
-        password: db.settings.pin || '1234', role: 'admin', assignedClasses: []
+    Object.keys(DEFAULT_DB).forEach(k => { if (_cache[k] === undefined) _cache[k] = DEFAULT_DB[k]; });
+    if (_cache.settings) {
+      Object.keys(DEFAULT_DB.settings).forEach(k => {
+        if (_cache.settings[k] === undefined) _cache.settings[k] = DEFAULT_DB.settings[k];
       });
-      writeDB(db);
     }
-    _dbCache = db;
-    _dbCacheTime = Date.now();
-    return db;
-  } catch(e) {
-    console.error('[DB] readDB error:', e.message);
-    return JSON.parse(JSON.stringify(DEFAULT_DB));
+    if (!_cache.settings.pin) _cache.settings.pin = '1234';
+    if (!_cache.accounts) _cache.accounts = [];
+    if (!_cache.accounts.find(a => a.role === 'admin')) {
+      _cache.accounts.unshift({
+        id: 'admin', name: 'المدير', username: 'admin',
+        password: _cache.settings.pin || '1234', role: 'admin', assignedClasses: []
+      });
+      await _supabaseWriteAll(_cache);
+    }
+    console.log('[DB] ✓ تم تحميل البيانات من Supabase');
   }
 }
 
+// ── كتابة كل المفاتيح دفعة واحدة إلى Supabase ───────────────
+async function _supabaseWriteAll(db) {
+  const rows = Object.entries(db).map(([key, value]) => ({ key, value: JSON.stringify(value) }));
+  const { error } = await _supabase.from('store').upsert(rows, { onConflict: 'key' });
+  if (error) console.error('[DB] Supabase writeAll error:', error.message);
+}
+
+// ── كتابة مفتاح واحد إلى Supabase ───────────────────────────
+async function _supabaseWriteKey(key, value) {
+  const { error } = await _supabase
+    .from('store')
+    .upsert({ key, value: JSON.stringify(value) }, { onConflict: 'key' });
+  if (error) console.error('[DB] Supabase writeKey error:', error.message);
+}
+
+// ── دوال قاعدة البيانات (API مطابق للسابق) ──────────────────
+function readDB() {
+  if (!_cache) throw new Error('[DB] Cache not initialized — server still starting up');
+  return _cache;
+}
+
 function writeDB(db) {
-  const ins = _db.prepare('INSERT OR REPLACE INTO store (key, value) VALUES (?, ?)');
-  _db.transaction(data => {
-    for (const [k, v] of Object.entries(data)) ins.run(k, JSON.stringify(v));
-  })(db);
-  _dbCache = null; // إبطال الكاش بعد أي كتابة
+  _cache = db;
+  _supabaseWriteAll(db).catch(e => console.error('[DB] async writeAll error:', e.message));
 }
 
 // writeKey — كتابة مفتاح واحد فقط (أداء أفضل للعمليات الكبيرة)
 function writeKey(key, value) {
-  _db.prepare('INSERT OR REPLACE INTO store (key, value) VALUES (?, ?)').run(key, JSON.stringify(value));
-  _dbCache = null; // إبطال الكاش عند الكتابة
+  if (_cache) _cache[key] = value;
+  _supabaseWriteKey(key, value).catch(e => console.error('[DB] async writeKey error:', e.message));
 }
 
-// ── كاش في الذاكرة لتجنب قراءة SQLite في كل طلب ──────────
-// صالح لمدة 150ms — يحل مشكلة البطء دون الإخلال بالتزامن
-let _dbCache = null;
-let _dbCacheTime = 0;
-const _DB_CACHE_TTL = 150; // مللي ثانية
-
-// readKey — قراءة مفتاح واحد فقط (أسرع للطلبات البسيطة)
-function readKey(key) {
-  if (_dbCache && (Date.now() - _dbCacheTime) < _DB_CACHE_TTL) {
-    return _dbCache[key] !== undefined ? _dbCache[key] : (DEFAULT_DB[key] ?? null);
-  }
-  try {
-    const row = _db.prepare('SELECT value FROM store WHERE key = ?').get(key);
-    return row ? JSON.parse(row.value) : (DEFAULT_DB[key] ?? null);
-  } catch(e) {
-    return DEFAULT_DB[key] ?? null;
-  }
-}
-
-function saveDB(fn) {
+// saveDB(fn)          — full write (use only when multiple keys change)
+// saveDB(fn, 'key')   — single-key write (fast path, writes only that key to Supabase)
+function saveDB(fn, key) {
   const db = readDB();
   fn(db);
-  writeDB(db);
+  if (key) {
+    writeKey(key, db[key]);   // PERF: write only the changed key
+  } else {
+    writeDB(db);              // fallback: full write (multiple keys changed)
+  }
 }
 
 function newId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 
 // ── التوقيت المحلي (مع دعم المنطقة الزمنية) ─────────────
-// اضبط TIMEZONE_OFFSET=3 في Render إذا كنت في السعودية (UTC+3)
-// أو اضبط TZ=Asia/Riyadh في متغيرات البيئة
-function _localNow() {
-  const offset = parseInt(process.env.TIMEZONE_OFFSET || '0', 10);
-  if (offset === 0) return new Date();
-  return new Date(Date.now() + offset * 60 * 60 * 1000);
+// يستخدم Intl.DateTimeFormat لضمان الحصول على التوقيت الصحيح
+// بغض النظر عن توقيت الخادم — toISOString() دائماً UTC.
+// المنطقة الزمنية الافتراضية: Asia/Riyadh (يمكن تغييرها عبر TZ_NAME)
+const _TZ = process.env.TZ_NAME || 'Asia/Riyadh';
+function nowDate() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: _TZ });
 }
-function nowDate() { return _localNow().toISOString().slice(0, 10); }
-function nowTime() { return _localNow().toISOString().slice(11, 16); }
+function nowTime() {
+  return new Date().toLocaleTimeString('en-GB', { timeZone: _TZ, hour: '2-digit', minute: '2-digit' });
+}
 
 // ── IP الشبكة المحلية ────────────────────────────────────
 function getLocalIP() {
@@ -730,22 +724,41 @@ async function buildTeacherMonthlySheetGregorian(db, year, month) {
 }
 
 // ── Multer ───────────────────────────────────────────────
+// multer — ذاكرة مؤقتة (الملفات تُرفع لـ Supabase Storage مباشرة)
 const upload = multer({
-  storage: multer.diskStorage({
-    destination: (_, __, cb) => cb(null, UPLOADS_DIR),
-    filename: (_, f, cb) => cb(null, `${newId()}_${f.originalname.replace(/[^\w.\-]/g,'_')}`)
-  }),
+  storage: multer.memoryStorage(),
   limits: { fileSize: 10*1024*1024 }
 });
 
+// ── رفع ملف إلى Supabase Storage ────────────────────────
+// أنشئ الحاوية مرة واحدة: Supabase → Storage → New bucket → uploads → Public
+const STORAGE_BUCKET = process.env.SUPABASE_BUCKET || 'uploads';
+async function uploadToSupabase(buffer, mimetype, originalName) {
+  const ext      = (originalName.split('.').pop() || 'bin').replace(/[^\w]/g, '');
+  const filename = `${newId()}.${ext}`;
+  const { error } = await _supabase.storage
+    .from(STORAGE_BUCKET)
+    .upload(filename, buffer, { contentType: mimetype, upsert: false });
+  if (error) throw new Error('Supabase Storage error: ' + error.message);
+  const { data } = _supabase.storage.from(STORAGE_BUCKET).getPublicUrl(filename);
+  return data.publicUrl;
+}
+
 // ── Middleware ───────────────────────────────────────────
+// PERF: gzip all JSON/text responses (cuts response size 60–80%)
+if (compression) app.use(compression());
 app.use(express.json({ limit:'10mb' }));
 app.use(express.urlencoded({ extended:true }));
-app.use('/uploads', express.static(UPLOADS_DIR));
+// PERF: cache static assets for 1 day (JS, CSS, images)
+app.use('/uploads', express.static(UPLOADS_DIR, { maxAge: '1d' }));
 
 // خدمة الملفات الثابتة: أولاً app/ ثم المجلد الجذر
-if (fs.existsSync(APP_DIR)) app.use(express.static(APP_DIR));
-app.use(express.static(ROOT_DIR));
+// PERF: 1-day cache for CSS/JS/fonts/images, no-cache for HTML
+const _staticOpts = { maxAge: '1d', setHeaders(res, filePath) {
+  if (filePath.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache');
+}};
+if (fs.existsSync(APP_DIR)) app.use(express.static(APP_DIR, _staticOpts));
+app.use(express.static(ROOT_DIR, _staticOpts));
 
 // ════════════════════════════════════════════════════════
 //  SSE — Server-Sent Events (real-time push to clients)
@@ -1001,7 +1014,7 @@ app.get('/api/students', (_, res) => res.json(readDB().students));
 
 app.post('/api/students', (req, res) => {
   const id = newId();
-  saveDB(db => db.students.push({ ...req.body, id }));
+  saveDB(db => db.students.push({ ...req.body, id }), 'students');
   res.json({ id });
 });
 
@@ -1009,12 +1022,12 @@ app.put('/api/students/:id', (req, res) => {
   saveDB(db => {
     const i = db.students.findIndex(s => s.id === req.params.id);
     if (i>=0) db.students[i] = { ...db.students[i], ...req.body, id:req.params.id };
-  });
+  }, 'students');
   res.json({ ok:true });
 });
 
 app.delete('/api/students/:id', (req, res) => {
-  saveDB(db => { db.students = db.students.filter(s => s.id !== req.params.id); });
+  saveDB(db => { db.students = db.students.filter(s => s.id !== req.params.id); }, 'students');
   res.json({ ok:true });
 });
 
@@ -1124,7 +1137,7 @@ app.post('/api/quran-progress', (req, res) => {
   saveDB(db => {
     if (!db.quranProgress) db.quranProgress = [];
     db.quranProgress.push({ ...req.body, id });
-  });
+  }, 'quranProgress');
   res.json({ id });
 });
 
@@ -1132,12 +1145,12 @@ app.put('/api/quran-progress/:id', (req, res) => {
   saveDB(db => {
     const i = (db.quranProgress||[]).findIndex(p => p.id === req.params.id);
     if (i>=0) db.quranProgress[i] = { ...db.quranProgress[i], ...req.body, id:req.params.id };
-  });
+  }, 'quranProgress');
   res.json({ ok:true });
 });
 
 app.delete('/api/quran-progress/:id', (req, res) => {
-  saveDB(db => { db.quranProgress = (db.quranProgress||[]).filter(p => p.id !== req.params.id); });
+  saveDB(db => { db.quranProgress = (db.quranProgress||[]).filter(p => p.id !== req.params.id); }, 'quranProgress');
   res.json({ ok:true });
 });
 
@@ -1226,11 +1239,42 @@ app.get('/api/students/:id', (req, res) => {
   res.json({ ...s, history, leaves, notices });
 });
 
-app.post('/api/students/:id/photo', upload.single('photo'), (req, res) => {
-  if (!req.file) return res.json({ ok:false });
-  const url = `/uploads/${req.file.filename}`;
-  saveDB(db => { const i=db.students.findIndex(s=>s.id===req.params.id); if(i>=0) db.students[i].photo=url; });
-  res.json({ ok:true, url });
+app.post('/api/students/:id/photo', upload.single('photo'), async (req, res) => {
+  if (!req.file) return res.json({ ok:false, error:'لم يتم استلام الملف' });
+  try {
+    const url = await uploadToSupabase(req.file.buffer, req.file.mimetype, req.file.originalname);
+    saveDB(db => { const i=db.students.findIndex(s=>s.id===req.params.id); if(i>=0) db.students[i].photo=url; });
+    res.json({ ok:true, url });
+  } catch(e) {
+    console.error('[photo] student:', e.message);
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+// صورة المعلم
+app.post('/api/teachers/:id/photo', upload.single('photo'), async (req, res) => {
+  if (!req.file) return res.json({ ok:false, error:'لم يتم استلام الملف' });
+  try {
+    const url = await uploadToSupabase(req.file.buffer, req.file.mimetype, req.file.originalname);
+    saveDB(db => { const i=db.teachers.findIndex(t=>t.id===req.params.id); if(i>=0) db.teachers[i].photo=url; });
+    res.json({ ok:true, url });
+  } catch(e) {
+    console.error('[photo] teacher:', e.message);
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+// صورة الحساب (مدير / مشرف)
+app.post('/api/accounts/:id/photo', upload.single('photo'), async (req, res) => {
+  if (!req.file) return res.json({ ok:false, error:'لم يتم استلام الملف' });
+  try {
+    const url = await uploadToSupabase(req.file.buffer, req.file.mimetype, req.file.originalname);
+    saveDB(db => { const i=db.accounts.findIndex(a=>a.id===req.params.id); if(i>=0) db.accounts[i].photo=url; });
+    res.json({ ok:true, url });
+  } catch(e) {
+    console.error('[photo] account:', e.message);
+    res.status(500).json({ ok:false, error: e.message });
+  }
 });
 
 
@@ -1239,21 +1283,21 @@ app.post('/api/students/:id/photo', upload.single('photo'), (req, res) => {
 // ════════════════════════════════════════════════════════
 app.get('/api/classes', (_, res) => res.json(readDB().classes));
 app.post('/api/classes', (req, res) => {
-  const id=newId(); saveDB(db=>db.classes.push({...req.body,id})); res.json({id});
+  const id=newId(); saveDB(db=>db.classes.push({...req.body,id}), 'classes'); res.json({id});
 });
 app.put('/api/classes/:id', (req, res) => {
-  saveDB(db=>{ const i=db.classes.findIndex(c=>c.id===req.params.id); if(i>=0) db.classes[i]={...db.classes[i],...req.body,id:req.params.id}; });
+  saveDB(db=>{ const i=db.classes.findIndex(c=>c.id===req.params.id); if(i>=0) db.classes[i]={...db.classes[i],...req.body,id:req.params.id}; }, 'classes');
   res.json({ok:true});
 });
 app.delete('/api/classes/:id', (req, res) => {
-  saveDB(db=>{ db.classes=db.classes.filter(c=>c.id!==req.params.id); }); res.json({ok:true});
+  saveDB(db=>{ db.classes=db.classes.filter(c=>c.id!==req.params.id); }, 'classes'); res.json({ok:true});
 });
 
 
 // ════════════════════════════════════════════════════════
 //  4. المعلمون
 // ════════════════════════════════════════════════════════
-app.get('/api/teachers', (_, res) => res.json(readKey('teachers') || []));
+app.get('/api/teachers', (_, res) => res.json(readDB().teachers));
 
 app.get('/api/teachers/:id', (req, res) => {
   const db = readDB();
@@ -1263,8 +1307,8 @@ app.get('/api/teachers/:id', (req, res) => {
     .filter(l => l.teacherId === t.id)
     .sort((a, b) => b.date.localeCompare(a.date));
 
-  const today   = nowDate();
-  const _nowStr = nowTime(); // ✅ إصلاح: كانت تستخدم نفس اسم الدالة العامة مما يسبب ReferenceError
+  const today    = nowDate();
+  const _nowStr  = nowTime();   // FIX: renamed — was `const nowTime = nowTime()` which shadowed the function
 
   // Duration per entry:
   //  • checkOut exists → actual duration
@@ -1319,14 +1363,14 @@ app.get('/api/teachers/:id', (req, res) => {
   res.json({ ...t, log: logWithDuration, totalMins, daysPresent, monthlyMins, todayMins, todayLive, monthlyHistory });
 });
 app.post('/api/teachers', (req, res) => {
-  const id=newId(); saveDB(db=>db.teachers.push({...req.body,id})); res.json({id});
+  const id=newId(); saveDB(db=>db.teachers.push({...req.body,id}), 'teachers'); res.json({id});
 });
 app.put('/api/teachers/:id', (req, res) => {
-  saveDB(db=>{ const i=db.teachers.findIndex(t=>t.id===req.params.id); if(i>=0) db.teachers[i]={...db.teachers[i],...req.body,id:req.params.id}; });
+  saveDB(db=>{ const i=db.teachers.findIndex(t=>t.id===req.params.id); if(i>=0) db.teachers[i]={...db.teachers[i],...req.body,id:req.params.id}; }, 'teachers');
   res.json({ok:true});
 });
 app.delete('/api/teachers/:id', (req, res) => {
-  saveDB(db=>{ db.teachers=db.teachers.filter(t=>t.id!==req.params.id); }); res.json({ok:true});
+  saveDB(db=>{ db.teachers=db.teachers.filter(t=>t.id!==req.params.id); }, 'teachers'); res.json({ok:true});
 });
 
 
@@ -1335,7 +1379,7 @@ app.delete('/api/teachers/:id', (req, res) => {
 // ════════════════════════════════════════════════════════
 app.get('/api/teacher-log', (req, res) => {
   const {date} = req.query;
-  const teacherLog = readKey('teacherLog') || [];
+  const {teacherLog} = readDB();
   res.json(date ? teacherLog.filter(l=>l.date===date) : teacherLog);
 });
 
@@ -1378,7 +1422,7 @@ app.post('/api/teacher-log/checkout', (req, res) => {
 // ════════════════════════════════════════════════════════
 //  6. الإجازات
 // ════════════════════════════════════════════════════════
-app.get('/api/holidays', (_, res) => res.json(readKey('holidays') || []));
+app.get('/api/holidays', (_, res) => res.json(readDB().holidays));
 
 app.get('/api/holidays/check/:date', (req, res) => {
   const {date} = req.params;
@@ -1389,12 +1433,12 @@ app.get('/api/holidays/check/:date', (req, res) => {
 
 app.post('/api/holidays', (req, res) => {
   const id=newId();
-  saveDB(db=>{ db.holidays=db.holidays.filter(h=>h.date!==req.body.date); db.holidays.push({...req.body,id}); });
+  saveDB(db=>{ db.holidays=db.holidays.filter(h=>h.date!==req.body.date); db.holidays.push({...req.body,id}); }, 'holidays');
   res.json({ok:true,id});
 });
 
 app.delete('/api/holidays/:date', (req, res) => {
-  saveDB(db=>{ db.holidays=db.holidays.filter(h=>h.date!==req.params.date); }); res.json({ok:true});
+  saveDB(db=>{ db.holidays=db.holidays.filter(h=>h.date!==req.params.date); }, 'holidays'); res.json({ok:true});
 });
 
 
@@ -1575,18 +1619,23 @@ app.put('/api/settings', (req, res) => {
     const {pin, ...rest} = req.body;
     if (pin) db.settings.pin = String(pin);
     Object.assign(db.settings, rest);
-  });
+  }, 'settings');
   res.json({ok:true});
 });
 
 // رفع شعار
-app.post('/api/settings/logos', upload.single('logo'), (req, res) => {
+app.post('/api/settings/logos', upload.single('logo'), async (req, res) => {
   if (!req.file) return res.status(400).json({ok:false, error:'لم يتم رفع ملف'});
-  const url  = `/uploads/${req.file.filename}`;
-  const name = req.body.name || req.file.originalname;
-  const id   = newId();
-  saveDB(db => { if (!db.settings.logos) db.settings.logos=[]; db.settings.logos.push({id,url,name}); });
-  res.json({ok:true, id, url});
+  try {
+    const url  = await uploadToSupabase(req.file.buffer, req.file.mimetype, req.file.originalname);
+    const name = req.body.name || req.file.originalname;
+    const id   = newId();
+    saveDB(db => { if (!db.settings.logos) db.settings.logos=[]; db.settings.logos.push({id,url,name}); });
+    res.json({ok:true, id, url});
+  } catch(e) {
+    console.error('[logo] upload:', e.message);
+    res.status(500).json({ok:false, error: e.message});
+  }
 });
 
 // حذف شعار
@@ -1594,7 +1643,7 @@ app.delete('/api/settings/logos/:id', (req, res) => {
   saveDB(db => {
     if (!db.settings.logos) return;
     const logo = db.settings.logos.find(l=>l.id===req.params.id);
-    if (logo?.url) { try { fs.unlinkSync(path.join(UPLOADS_DIR, path.basename(logo.url))); } catch(e){} }
+    // الصورة مخزنة في Supabase Storage — لا حاجة لحذف ملف محلي
     db.settings.logos = db.settings.logos.filter(l=>l.id!==req.params.id);
   });
   res.json({ok:true});
@@ -1779,6 +1828,8 @@ app.post('/api/whatsapp/send-bulk', async (req, res) => {
 
   if (!token) return res.json({ ok:false, error:'Fonnte Token غير مُعيَّن في الإعدادات' });
 
+  // PERF: collect log entries in memory, flush once after the loop
+  const newLogEntries = [];
   const results = []; let sent=0, failed=0;
   for (const r of records) {
     if (!r.phone) { results.push({ ok:false, error:'لا يوجد رقم هاتف' }); failed++; continue; }
@@ -1786,21 +1837,21 @@ app.post('/api/whatsapp/send-bulk', async (req, res) => {
     const result = await fonnteRequest(token, r.phone, msg);
     results.push(result);
 
-    // تسجيل في السجل
-    const db2 = readDB();
-    db2.waLog = db2.waLog || [];
-    db2.waLog.push({
+    newLogEntries.push({
       id: newId(), type:'absence', date,
       studentId: r.studentId||'', studentName: r.name,
       phone: r.phone, className: cls?.name||'', classId: classId||'',
       message: msg, status: result.ok ? 'sent' : 'failed',
       sentAt: new Date().toISOString(), error: result.error||''
     });
-    writeDB(db2);
 
     if (result.ok) sent++; else failed++;
     await new Promise(ok => setTimeout(ok, 800));
   }
+
+  // PERF: single Supabase write for all log entries (was N full writeDB calls)
+  saveDB(db2 => { db2.waLog = (db2.waLog || []).concat(newLogEntries); }, 'waLog');
+
   res.json({ results, sent, failed });
 });
 
@@ -3304,9 +3355,10 @@ app.get('/api/teacher-log/today-summary', (_, res) => {
 // ════════════════════════════════════════════════════════
 app.get('/api/sync/export', (_, res) => {
   const db = readDB();
+  const filename = `backup_${nowDate()}_${nowTime().replace(':','-')}.json`;
   res.setHeader('Content-Type','application/json');
-  res.setHeader('Content-Disposition',`attachment; filename="backup_${new Date().toISOString().split('T')[0]}.json"`);
-  res.json({...db, exportedAt:new Date().toISOString(), version:3});
+  res.setHeader('Content-Disposition',`attachment; filename="${filename}"`);
+  res.json({...db, exportedAt: new Date().toISOString(), version:3});
 });
 
 // دمج بيانات من bundle في قاعدة البيانات
@@ -3370,6 +3422,94 @@ app.post('/api/sync/import-file', upload.single('file'), (req, res) => {
     }
     const merged = _mergeBundle(bundle);
     res.json({ ok: true, merged });
+  } catch(e) {
+    res.json({ ok: false, error: 'خطأ في قراءة الملف: ' + e.message });
+  }
+});
+
+// استعادة كاملة — يستبدل قاعدة البيانات بالكامل (لا دمج)
+app.post('/api/backup/restore', upload.single('file'), (req, res) => {
+  if (!req.file) return res.json({ ok: false, error: 'لم يتم استلام الملف' });
+  try {
+    let content;
+    if (req.file.buffer) {
+      content = req.file.buffer.toString('utf8').replace(/^\uFEFF/, '');
+    } else {
+      content = fs.readFileSync(req.file.path, 'utf8').replace(/^\uFEFF/, '');
+      try { fs.unlinkSync(req.file.path); } catch(_) {}
+    }
+    const bundle = JSON.parse(content);
+    if (typeof bundle !== 'object' || Array.isArray(bundle)) {
+      return res.json({ ok: false, error: 'ملف غير صالح' });
+    }
+    // Remove metadata fields before restoring
+    const { exportedAt, version, ...data } = bundle;
+    // Merge with defaults to ensure all keys exist
+    const restored = { ...JSON.parse(JSON.stringify(DEFAULT_DB)), ...data };
+    writeDB(restored);
+    res.json({ ok: true });
+  } catch(e) {
+    res.json({ ok: false, error: 'خطأ في قراءة الملف: ' + e.message });
+  }
+});
+
+// استيراد ملف CSV من Supabase (عمودان: key, value)
+app.post('/api/backup/restore-csv', upload.single('file'), (req, res) => {
+  if (!req.file) return res.json({ ok: false, error: 'لم يتم استلام الملف' });
+  try {
+    let content;
+    if (req.file.buffer) {
+      content = req.file.buffer.toString('utf8').replace(/^\uFEFF/, '');
+    } else {
+      content = fs.readFileSync(req.file.path, 'utf8').replace(/^\uFEFF/, '');
+      try { fs.unlinkSync(req.file.path); } catch(_) {}
+    }
+    // Parse CSV — handles quoted fields that may contain commas
+    const lines = content.split(/\r?\n/).filter(l => l.trim());
+    if (!lines.length) return res.json({ ok: false, error: 'الملف فارغ' });
+
+    // Detect header row and find key/value column indices
+    function parseCsvLine(line) {
+      const cols = [];
+      let cur = '', inQ = false;
+      for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (ch === '"') {
+          if (inQ && line[i+1] === '"') { cur += '"'; i++; }
+          else inQ = !inQ;
+        } else if (ch === ',' && !inQ) {
+          cols.push(cur); cur = '';
+        } else {
+          cur += ch;
+        }
+      }
+      cols.push(cur);
+      return cols;
+    }
+
+    const header = parseCsvLine(lines[0]).map(h => h.trim().toLowerCase());
+    const keyIdx = header.indexOf('key');
+    const valIdx = header.indexOf('value');
+    if (keyIdx === -1 || valIdx === -1) {
+      return res.json({ ok: false, error: 'لم يتم العثور على عمودَي key و value في الملف' });
+    }
+
+    const bundle = {};
+    for (let i = 1; i < lines.length; i++) {
+      const cols = parseCsvLine(lines[i]);
+      const key  = (cols[keyIdx] || '').trim();
+      const val  = (cols[valIdx] || '').trim();
+      if (!key) continue;
+      try { bundle[key] = JSON.parse(val); } catch(_) { bundle[key] = val; }
+    }
+
+    if (!Object.keys(bundle).length) {
+      return res.json({ ok: false, error: 'لم يتم قراءة أي بيانات من الملف' });
+    }
+
+    const restored = { ...JSON.parse(JSON.stringify(DEFAULT_DB)), ...bundle };
+    writeDB(restored);
+    res.json({ ok: true, keys: Object.keys(bundle).length });
   } catch(e) {
     res.json({ ok: false, error: 'خطأ في قراءة الملف: ' + e.message });
   }
@@ -4008,14 +4148,22 @@ setInterval(async () => {
   }
 }, 60 * 1000); // every 60 seconds
 
-app.listen(PORT, '0.0.0.0', () => {
-  const ip = getLocalIP();
-  console.log(`\n╔══════════════════════════════════════════╗`);
-  console.log(`║  ✅حلقات مجمع الخير — جاهز للعمل            ║`);
-  console.log(`║  http://localhost:${PORT}                    ║`);
-  console.log(`║  📱 شبكة محلية: http://${ip}:${PORT}  ║`);
-  console.log(`╚══════════════════════════════════════════╝\n`);
-});
-
 process.on('uncaughtException',     e => console.error('[CRASH] uncaughtException:', e));
 process.on('unhandledRejection', (r,p) => console.error('[CRASH] unhandledRejection:', r));
+
+// ── بدء التشغيل: تحميل Supabase أولاً ثم فتح المنفذ ─────────
+_initCache()
+  .then(() => {
+    app.listen(PORT, '0.0.0.0', () => {
+      const ip = getLocalIP();
+      console.log(`\n╔══════════════════════════════════════════╗`);
+      console.log(`║  ✅حلقات مجمع الخير — جاهز للعمل            ║`);
+      console.log(`║  http://localhost:${PORT}                    ║`);
+      console.log(`║  📱 شبكة محلية: http://${ip}:${PORT}  ║`);
+      console.log(`╚══════════════════════════════════════════╝\n`);
+    });
+  })
+  .catch(e => {
+    console.error('[FATAL] فشل الاتصال بـ Supabase — تحقق من SUPABASE_URL و SUPABASE_KEY:', e.message);
+    process.exit(1);
+  });
