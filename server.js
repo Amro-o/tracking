@@ -717,13 +717,25 @@ async function buildTeacherMonthlySheetGregorian(db, year, month) {
 }
 
 // ── Multer ───────────────────────────────────────────────
+// multer — ذاكرة مؤقتة (الملفات تُرفع لـ Supabase Storage مباشرة)
 const upload = multer({
-  storage: multer.diskStorage({
-    destination: (_, __, cb) => cb(null, UPLOADS_DIR),
-    filename: (_, f, cb) => cb(null, `${newId()}_${f.originalname.replace(/[^\w.\-]/g,'_')}`)
-  }),
+  storage: multer.memoryStorage(),
   limits: { fileSize: 10*1024*1024 }
 });
+
+// ── رفع ملف إلى Supabase Storage ────────────────────────
+// أنشئ الحاوية مرة واحدة: Supabase → Storage → New bucket → uploads → Public
+const STORAGE_BUCKET = process.env.SUPABASE_BUCKET || 'uploads';
+async function uploadToSupabase(buffer, mimetype, originalName) {
+  const ext      = (originalName.split('.').pop() || 'bin').replace(/[^\w]/g, '');
+  const filename = `${newId()}.${ext}`;
+  const { error } = await _supabase.storage
+    .from(STORAGE_BUCKET)
+    .upload(filename, buffer, { contentType: mimetype, upsert: false });
+  if (error) throw new Error('Supabase Storage error: ' + error.message);
+  const { data } = _supabase.storage.from(STORAGE_BUCKET).getPublicUrl(filename);
+  return data.publicUrl;
+}
 
 // ── Middleware ───────────────────────────────────────────
 app.use(express.json({ limit:'10mb' }));
@@ -1213,11 +1225,42 @@ app.get('/api/students/:id', (req, res) => {
   res.json({ ...s, history, leaves, notices });
 });
 
-app.post('/api/students/:id/photo', upload.single('photo'), (req, res) => {
-  if (!req.file) return res.json({ ok:false });
-  const url = `/uploads/${req.file.filename}`;
-  saveDB(db => { const i=db.students.findIndex(s=>s.id===req.params.id); if(i>=0) db.students[i].photo=url; });
-  res.json({ ok:true, url });
+app.post('/api/students/:id/photo', upload.single('photo'), async (req, res) => {
+  if (!req.file) return res.json({ ok:false, error:'لم يتم استلام الملف' });
+  try {
+    const url = await uploadToSupabase(req.file.buffer, req.file.mimetype, req.file.originalname);
+    saveDB(db => { const i=db.students.findIndex(s=>s.id===req.params.id); if(i>=0) db.students[i].photo=url; });
+    res.json({ ok:true, url });
+  } catch(e) {
+    console.error('[photo] student:', e.message);
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+// صورة المعلم
+app.post('/api/teachers/:id/photo', upload.single('photo'), async (req, res) => {
+  if (!req.file) return res.json({ ok:false, error:'لم يتم استلام الملف' });
+  try {
+    const url = await uploadToSupabase(req.file.buffer, req.file.mimetype, req.file.originalname);
+    saveDB(db => { const i=db.teachers.findIndex(t=>t.id===req.params.id); if(i>=0) db.teachers[i].photo=url; });
+    res.json({ ok:true, url });
+  } catch(e) {
+    console.error('[photo] teacher:', e.message);
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+// صورة الحساب (مدير / مشرف)
+app.post('/api/accounts/:id/photo', upload.single('photo'), async (req, res) => {
+  if (!req.file) return res.json({ ok:false, error:'لم يتم استلام الملف' });
+  try {
+    const url = await uploadToSupabase(req.file.buffer, req.file.mimetype, req.file.originalname);
+    saveDB(db => { const i=db.accounts.findIndex(a=>a.id===req.params.id); if(i>=0) db.accounts[i].photo=url; });
+    res.json({ ok:true, url });
+  } catch(e) {
+    console.error('[photo] account:', e.message);
+    res.status(500).json({ ok:false, error: e.message });
+  }
 });
 
 
@@ -1567,13 +1610,18 @@ app.put('/api/settings', (req, res) => {
 });
 
 // رفع شعار
-app.post('/api/settings/logos', upload.single('logo'), (req, res) => {
+app.post('/api/settings/logos', upload.single('logo'), async (req, res) => {
   if (!req.file) return res.status(400).json({ok:false, error:'لم يتم رفع ملف'});
-  const url  = `/uploads/${req.file.filename}`;
-  const name = req.body.name || req.file.originalname;
-  const id   = newId();
-  saveDB(db => { if (!db.settings.logos) db.settings.logos=[]; db.settings.logos.push({id,url,name}); });
-  res.json({ok:true, id, url});
+  try {
+    const url  = await uploadToSupabase(req.file.buffer, req.file.mimetype, req.file.originalname);
+    const name = req.body.name || req.file.originalname;
+    const id   = newId();
+    saveDB(db => { if (!db.settings.logos) db.settings.logos=[]; db.settings.logos.push({id,url,name}); });
+    res.json({ok:true, id, url});
+  } catch(e) {
+    console.error('[logo] upload:', e.message);
+    res.status(500).json({ok:false, error: e.message});
+  }
 });
 
 // حذف شعار
@@ -1581,7 +1629,7 @@ app.delete('/api/settings/logos/:id', (req, res) => {
   saveDB(db => {
     if (!db.settings.logos) return;
     const logo = db.settings.logos.find(l=>l.id===req.params.id);
-    if (logo?.url) { try { fs.unlinkSync(path.join(UPLOADS_DIR, path.basename(logo.url))); } catch(e){} }
+    // الصورة مخزنة في Supabase Storage — لا حاجة لحذف ملف محلي
     db.settings.logos = db.settings.logos.filter(l=>l.id!==req.params.id);
   });
   res.json({ok:true});
