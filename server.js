@@ -9,7 +9,7 @@
 const express    = require('express');
 const path       = require('path');
 const fs         = require('fs');
-const { createClient } = require('@supabase/supabase-js');
+const Database   = require('better-sqlite3');
 let XLSX; try { XLSX = require('xlsx-js-style'); } catch(e) { XLSX = require('xlsx'); }
 const ExcelJS = require('exceljs');
 const PDFDocument= require('pdfkit');
@@ -26,10 +26,14 @@ const PORT = process.env.PORT || 3000;
 
 // ── المسارات ─────────────────────────────────────────────
 const ROOT_DIR   = __dirname;
+const DATA_DIR   = process.env.DATA_DIR || path.join(ROOT_DIR, 'data');
+const DB_FILE    = path.join(DATA_DIR, 'db.json');
+const UPLOADS_DIR= path.join(DATA_DIR, 'uploads');
 const APP_DIR    = path.join(ROOT_DIR, 'app');   // للملفات الثابتة (index.html, app.js, styles.css)
 
-// اسم bucket في Supabase Storage
-const STORAGE_BUCKET = 'uploads';
+[DATA_DIR, UPLOADS_DIR].forEach(d => {
+  if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
+});
 
 // ── قاعدة البيانات الافتراضية ────────────────────────────
 const DEFAULT_DB = {
@@ -59,68 +63,108 @@ const DEFAULT_DB = {
 };
 
 // ══════════════════════════════════════════════════════════════
-//  قاعدة البيانات — Supabase (PostgreSQL)
-//  نفس الواجهة القديمة: readDB / writeDB / writeKey / saveDB
-//  البيانات تُحمَّل في الذاكرة عند الإقلاع، وتُزامَن مع Supabase
+//  قاعدة البيانات — SQLite عبر better-sqlite3
+//  API مطابق للسابق (readDB / writeDB / saveDB) — لا تغيير في
+//  بقية الكود. كل مفتاح رئيسي (students, attendance, …) يُخزَّن
+//  كصف منفصل في جدول store → كتابة ذرية، آمنة من التلف.
+//  عند أول تشغيل: إن وُجد db.json قديم يُهاجر تلقائياً ثم يُعاد
+//  تسميته db.json.migrated (يبقى كنسخة احتياطية).
 // ══════════════════════════════════════════════════════════════
-const _supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_ANON_KEY
-);
+const DB_SQLITE = path.join(DATA_DIR, 'db.sqlite');
 
-let _memCache = null;
+// فتح / إنشاء ملف SQLite
+const _db = new Database(DB_SQLITE);
+_db.pragma('journal_mode = WAL');   // كتابات متزامنة آمنة
+_db.pragma('synchronous = NORMAL'); // أداء جيد مع أمان كافٍ
+_db.exec(`
+  CREATE TABLE IF NOT EXISTS store (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  );
+`);
 
-async function _flushToDB(db) {
-  const rows = Object.entries(db).map(([key, value]) => ({ key, value: JSON.stringify(value) }));
-  const { error } = await _supabase.from('store').upsert(rows, { onConflict: 'key' });
-  if (error) console.error('[DB] flush error:', error.message);
-}
-
-async function initDB() {
-  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
-    throw new Error('SUPABASE_URL و SUPABASE_ANON_KEY غير مُعيَّنَين');
-  }
-  const { data, error } = await _supabase.from('store').select('key, value');
-  if (error) throw new Error('[DB] initDB failed: ' + error.message);
-  if (!data || data.length === 0) {
-    _memCache = JSON.parse(JSON.stringify(DEFAULT_DB));
-    await _flushToDB(_memCache);
-    console.log('[DB] ✓ قاعدة بيانات جديدة');
-  } else {
-    _memCache = {};
-    for (const row of data) {
-      try { _memCache[row.key] = JSON.parse(row.value); } catch(e) { _memCache[row.key] = row.value; }
+// ── هجرة من db.json القديم (مرة واحدة فقط) ─────────────────
+(function _migrateFromJson() {
+  const count = _db.prepare('SELECT COUNT(*) as n FROM store').get().n;
+  if (count === 0 && fs.existsSync(DB_FILE)) {
+    try {
+      const old = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+      const ins = _db.prepare('INSERT OR REPLACE INTO store (key, value) VALUES (?, ?)');
+      _db.transaction(data => {
+        for (const [k, v] of Object.entries(data)) ins.run(k, JSON.stringify(v));
+      })(old);
+      fs.renameSync(DB_FILE, DB_FILE + '.migrated');
+      console.log('[DB] ✓ تمت الهجرة من db.json → SQLite، الملف القديم: db.json.migrated');
+    } catch (e) {
+      console.error('[DB] ✗ فشل الهجرة:', e.message);
     }
-    Object.keys(DEFAULT_DB).forEach(k => { if (_memCache[k] === undefined) _memCache[k] = DEFAULT_DB[k]; });
+  }
+})();
+
+// ── دوال قاعدة البيانات ──────────────────────────────────────
+function readDB() {
+  try {
+    const rows = _db.prepare('SELECT key, value FROM store').all();
+    if (!rows.length) {
+      const fresh = JSON.parse(JSON.stringify(DEFAULT_DB));
+      writeDB(fresh);
+      return fresh;
+    }
+    const db = {};
+    for (const row of rows) {
+      try { db[row.key] = JSON.parse(row.value); } catch(e) { db[row.key] = row.value; }
+    }
+    // ضمان المفاتيح الافتراضية
+    Object.keys(DEFAULT_DB).forEach(k => { if (db[k] === undefined) db[k] = DEFAULT_DB[k]; });
     Object.keys(DEFAULT_DB.settings).forEach(k => {
-      if (_memCache.settings[k] === undefined) _memCache.settings[k] = DEFAULT_DB.settings[k];
+      if (db.settings[k] === undefined) db.settings[k] = DEFAULT_DB.settings[k];
     });
-    if (!_memCache.settings.pin) _memCache.settings.pin = '1234';
-    if (!_memCache.accounts) _memCache.accounts = [];
-    if (!_memCache.accounts.find(a => a.role === 'admin')) {
-      _memCache.accounts.unshift({ id:'admin', name:'المدير', username:'admin', password:_memCache.settings.pin||'1234', role:'admin', assignedClasses:[] });
-      await _flushToDB(_memCache);
+    if (!db.settings.pin) db.settings.pin = '1234';
+    if (!db.accounts) db.accounts = [];
+    if (!db.accounts.find(a => a.role === 'admin')) {
+      db.accounts.unshift({
+        id: 'admin', name: 'المدير', username: 'admin',
+        password: db.settings.pin || '1234', role: 'admin', assignedClasses: []
+      });
+      writeDB(db);
     }
-    console.log('[DB] ✓ تم تحميل البيانات من Supabase');
+    return db;
+  } catch(e) {
+    console.error('[DB] readDB error:', e.message);
+    return JSON.parse(JSON.stringify(DEFAULT_DB));
   }
 }
-
-function readDB() { return JSON.parse(JSON.stringify(_memCache)); }
 
 function writeDB(db) {
-  _memCache = JSON.parse(JSON.stringify(db));
-  _flushToDB(db).catch(e => console.error('[DB] writeDB error:', e.message));
+  const ins = _db.prepare('INSERT OR REPLACE INTO store (key, value) VALUES (?, ?)');
+  _db.transaction(data => {
+    for (const [k, v] of Object.entries(data)) ins.run(k, JSON.stringify(v));
+  })(db);
 }
 
+// writeKey — كتابة مفتاح واحد فقط (أداء أفضل للعمليات الكبيرة)
 function writeKey(key, value) {
-  _memCache[key] = JSON.parse(JSON.stringify(value));
-  _supabase.from('store').upsert({ key, value: JSON.stringify(value) }, { onConflict: 'key' })
-    .then(({ error }) => { if (error) console.error('[DB] writeKey error:', error.message); });
+  _db.prepare('INSERT OR REPLACE INTO store (key, value) VALUES (?, ?)').run(key, JSON.stringify(value));
 }
 
-function saveDB(fn) { const db = readDB(); fn(db); writeDB(db); }
+function saveDB(fn) {
+  const db = readDB();
+  fn(db);
+  writeDB(db);
+}
 
 function newId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+
+// ── التوقيت المحلي (مع دعم المنطقة الزمنية) ─────────────
+// اضبط TIMEZONE_OFFSET=3 في Render إذا كنت في السعودية (UTC+3)
+// أو اضبط TZ=Asia/Riyadh في متغيرات البيئة
+function _localNow() {
+  const offset = parseInt(process.env.TIMEZONE_OFFSET || '0', 10);
+  if (offset === 0) return new Date();
+  return new Date(Date.now() + offset * 60 * 60 * 1000);
+}
+function nowDate() { return _localNow().toISOString().slice(0, 10); }
+function nowTime() { return _localNow().toISOString().slice(11, 16); }
 
 // ── IP الشبكة المحلية ────────────────────────────────────
 function getLocalIP() {
@@ -277,13 +321,13 @@ function dataCell(cell, value, isEven, alignH, isBold, fillOverride) {
 async function addLogoImage(wb, ws, totalCols, db) {
   const logoMeta = (db.settings?.logos||[])[0];
   if (!logoMeta?.url) return 3;
+  const logoPath = path.join(UPLOADS_DIR, path.basename(logoMeta.url));
+  if (!fs.existsSync(logoPath)) return 3;
   try {
-    const url = logoMeta.url;
-    const ext = (url.split('.').pop().split('?')[0] || '').toLowerCase();
+    const ext = path.extname(logoPath).replace('.','').toLowerCase();
     const imgType = ext==='jpg'?'jpeg':(ext==='png'?'png':null);
     if (!imgType) return 3;
-    const buffer = await fetchImageBuffer(url);
-    const imgId  = wb.addImage({ buffer, extension: imgType });
+    const imgId = wb.addImage({base64:fs.readFileSync(logoPath).toString('base64'), extension:imgType});
     ws.addImage(imgId, {tl:{col:0,row:0}, br:{col:2,row:2}, editAs:'oneCell'});
     ws.getRow(1).height = 35; ws.getRow(2).height = 35;
     return 2;
@@ -661,57 +705,18 @@ async function buildTeacherMonthlySheetGregorian(db, year, month) {
 }
 
 // ── Multer ───────────────────────────────────────────────
-// multer — ذاكرة مؤقتة فقط (لا كتابة على القرص)
 const upload = multer({
-  storage: multer.memoryStorage(),
+  storage: multer.diskStorage({
+    destination: (_, __, cb) => cb(null, UPLOADS_DIR),
+    filename: (_, f, cb) => cb(null, `${newId()}_${f.originalname.replace(/[^\w.\-]/g,'_')}`)
+  }),
   limits: { fileSize: 10*1024*1024 }
 });
-
-// ── رفع ملف إلى Supabase Storage ────────────────────────
-async function uploadToStorage(buffer, originalname, mimetype) {
-  const ext      = path.extname(originalname).replace(/[^\w.]/g,'') || 'bin';
-  const filename = `${newId()}_${originalname.replace(/[^\w.\-]/g,'_')}`;
-  const { data, error } = await _supabase.storage
-    .from(STORAGE_BUCKET)
-    .upload(filename, buffer, { contentType: mimetype, upsert: false });
-  if (error) throw new Error('Storage upload failed: ' + error.message);
-  const { data: pub } = _supabase.storage.from(STORAGE_BUCKET).getPublicUrl(filename);
-  return { filename, url: pub.publicUrl };
-}
-
-// ── حذف ملف من Supabase Storage ─────────────────────────
-async function deleteFromStorage(url) {
-  try {
-    // استخرج اسم الملف من الـ URL
-    const filename = url.split('/').pop().split('?')[0];
-    await _supabase.storage.from(STORAGE_BUCKET).remove([filename]);
-  } catch(e) {
-    console.warn('[Storage] delete warning:', e.message);
-  }
-}
-
-// ── جلب صورة من URL كـ buffer (للاستخدام في Excel/PDF) ──
-async function fetchImageBuffer(url) {
-  return new Promise((resolve, reject) => {
-    const mod = url.startsWith('https') ? require('https') : require('http');
-    mod.get(url, res => {
-      const chunks = [];
-      res.on('data', c => chunks.push(c));
-      res.on('end', () => resolve(Buffer.concat(chunks)));
-      res.on('error', reject);
-    }).on('error', reject);
-  });
-}
 
 // ── Middleware ───────────────────────────────────────────
 app.use(express.json({ limit:'10mb' }));
 app.use(express.urlencoded({ extended:true }));
-
-// مسار /uploads يُعيد توجيه إلى Supabase Storage مباشرة
-app.get('/uploads/:filename', (req, res) => {
-  const { data } = _supabase.storage.from(STORAGE_BUCKET).getPublicUrl(req.params.filename);
-  res.redirect(data.publicUrl);
-});
+app.use('/uploads', express.static(UPLOADS_DIR));
 
 // خدمة الملفات الثابتة: أولاً app/ ثم المجلد الجذر
 if (fs.existsSync(APP_DIR)) app.use(express.static(APP_DIR));
@@ -1137,15 +1142,17 @@ app.post('/api/students/import-preview', upload.single('file'), (req, res) => {
     const ext = path.extname(req.file.originalname || '').toLowerCase();
     let wb;
     if (ext === '.csv') {
-      const content = req.file.buffer.toString('utf8');
+      const content = fs.readFileSync(req.file.path, 'utf8');
       wb = XLSX.read(content, { type:'string' });
     } else {
-      wb = XLSX.read(req.file.buffer, { type:'buffer' });
+      wb = XLSX.readFile(req.file.path);
     }
     const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval:'' });
+    try { fs.unlinkSync(req.file.path); } catch(e){}
     if (!rows.length) return res.json({ ok:false, error:'الملف فارغ أو لا يحتوي على بيانات' });
     res.json({ ok:true, headers:Object.keys(rows[0]), rows:rows.slice(0,100), total:rows.length });
   } catch(e) {
+    try { if (req.file && req.file.path) fs.unlinkSync(req.file.path); } catch(_){}
     res.json({ ok:false, error:'خطأ في قراءة الملف: ' + e.message });
   }
 });
@@ -1194,15 +1201,11 @@ app.get('/api/students/:id', (req, res) => {
   res.json({ ...s, history, leaves, notices });
 });
 
-app.post('/api/students/:id/photo', upload.single('photo'), async (req, res) => {
+app.post('/api/students/:id/photo', upload.single('photo'), (req, res) => {
   if (!req.file) return res.json({ ok:false });
-  try {
-    const { url } = await uploadToStorage(req.file.buffer, req.file.originalname, req.file.mimetype);
-    saveDB(db => { const i=db.students.findIndex(s=>s.id===req.params.id); if(i>=0) db.students[i].photo=url; });
-    res.json({ ok:true, url });
-  } catch(e) {
-    res.json({ ok:false, error: e.message });
-  }
+  const url = `/uploads/${req.file.filename}`;
+  saveDB(db => { const i=db.students.findIndex(s=>s.id===req.params.id); if(i>=0) db.students[i].photo=url; });
+  res.json({ ok:true, url });
 });
 
 
@@ -1235,8 +1238,8 @@ app.get('/api/teachers/:id', (req, res) => {
     .filter(l => l.teacherId === t.id)
     .sort((a, b) => b.date.localeCompare(a.date));
 
-  const today   = new Date().toISOString().split('T')[0];
-  const nowTime = new Date().toTimeString().slice(0,5);
+  const today   = nowDate();
+  const nowTime = nowTime();
 
   // Duration per entry:
   //  • checkOut exists → actual duration
@@ -1313,8 +1316,8 @@ app.get('/api/teacher-log', (req, res) => {
 
 app.post('/api/teacher-log/checkin', (req, res) => {
   const {teacherId} = req.body;
-  const today = new Date().toISOString().split('T')[0];
-  const time  = new Date().toTimeString().slice(0,5);
+  const today = nowDate();
+  const time  = nowTime();
   const db    = readDB();
   // Auto-close any open sessions from previous days (teacher forgot to checkout)
   db.teacherLog.forEach(l => {
@@ -1333,8 +1336,8 @@ app.post('/api/teacher-log/checkin', (req, res) => {
 
 app.post('/api/teacher-log/checkout', (req, res) => {
   const {teacherId} = req.body;
-  const today = new Date().toISOString().split('T')[0];
-  const time  = new Date().toTimeString().slice(0,5);
+  const today = nowDate();
+  const time  = nowTime();
   const db    = readDB();
   const entry = db.teacherLog.find(l=>l.teacherId===teacherId && l.date===today);
   if (!entry)          return res.json({error:'لم يتم تسجيل الحضور بعد'});
@@ -1552,29 +1555,23 @@ app.put('/api/settings', (req, res) => {
 });
 
 // رفع شعار
-app.post('/api/settings/logos', upload.single('logo'), async (req, res) => {
+app.post('/api/settings/logos', upload.single('logo'), (req, res) => {
   if (!req.file) return res.status(400).json({ok:false, error:'لم يتم رفع ملف'});
-  try {
-    const { url } = await uploadToStorage(req.file.buffer, req.file.originalname, req.file.mimetype);
-    const name = req.body.name || req.file.originalname;
-    const id   = newId();
-    saveDB(db => { if (!db.settings.logos) db.settings.logos=[]; db.settings.logos.push({id,url,name}); });
-    res.json({ok:true, id, url});
-  } catch(e) {
-    res.json({ok:false, error: e.message});
-  }
+  const url  = `/uploads/${req.file.filename}`;
+  const name = req.body.name || req.file.originalname;
+  const id   = newId();
+  saveDB(db => { if (!db.settings.logos) db.settings.logos=[]; db.settings.logos.push({id,url,name}); });
+  res.json({ok:true, id, url});
 });
 
 // حذف شعار
-app.delete('/api/settings/logos/:id', async (req, res) => {
-  let logoUrl = null;
+app.delete('/api/settings/logos/:id', (req, res) => {
   saveDB(db => {
     if (!db.settings.logos) return;
     const logo = db.settings.logos.find(l=>l.id===req.params.id);
-    if (logo?.url) logoUrl = logo.url;
+    if (logo?.url) { try { fs.unlinkSync(path.join(UPLOADS_DIR, path.basename(logo.url))); } catch(e){} }
     db.settings.logos = db.settings.logos.filter(l=>l.id!==req.params.id);
   });
-  if (logoUrl) await deleteFromStorage(logoUrl);
   res.json({ok:true});
 });
 
@@ -3287,28 +3284,70 @@ app.get('/api/sync/export', (_, res) => {
   res.json({...db, exportedAt:new Date().toISOString(), version:3});
 });
 
-app.post('/api/sync/import', (req, res) => {
-  const bundle = req.body;
-  const db     = readDB();
-  let merged=0;
+// دمج بيانات من bundle في قاعدة البيانات
+function _mergeBundle(bundle) {
+  const db = readDB();
+  let merged = 0;
   function mergeArr(arr1, arr2, key) {
-    const map={}; arr1.forEach(x=>map[x[key]]=true);
-    arr2.forEach(x=>{ if(x[key]&&!map[x[key]]) { arr1.push(x); merged++; } });
+    const map = {}; arr1.forEach(x => map[x[key]] = true);
+    arr2.forEach(x => { if (x[key] && !map[x[key]]) { arr1.push(x); merged++; } });
   }
-  mergeArr(db.students,       bundle.students||[],       'id');
-  mergeArr(db.classes,        bundle.classes||[],        'id');
-  mergeArr(db.teachers,       bundle.teachers||[],       'id');
-  mergeArr(db.teacherLog,     bundle.teacherLog||[],     'id');
-  mergeArr(db.attendance,     bundle.attendance||[],     'id');
-  mergeArr(db.leaves,         bundle.leaves||[],         'id');
-  mergeArr(db.holidays,       bundle.holidays||[],       'date');
-  mergeArr(db.quranProgress,  bundle.quranProgress||[],  'id');
-  // Merge accounts if present (by username, skip if already exists)
-  if (Array.isArray(bundle.accounts)) {
-    mergeArr(db.accounts, bundle.accounts, 'id');
+  mergeArr(db.students,      bundle.students||[],      'id');
+  mergeArr(db.classes,       bundle.classes||[],       'id');
+  mergeArr(db.teachers,      bundle.teachers||[],      'id');
+  mergeArr(db.teacherLog,    bundle.teacherLog||[],    'id');
+  mergeArr(db.attendance,    bundle.attendance||[],    'id');
+  mergeArr(db.leaves,        bundle.leaves||[],        'id');
+  mergeArr(db.holidays,      bundle.holidays||[],      'date');
+  mergeArr(db.quranProgress, bundle.quranProgress||[], 'id');
+  if (Array.isArray(bundle.notices))           mergeArr(db.notices||[],           bundle.notices,           'id');
+  if (Array.isArray(bundle.calendarEvents))    mergeArr(db.calendarEvents||[],    bundle.calendarEvents,    'id');
+  if (Array.isArray(bundle.admissionRequests)) mergeArr(db.admissionRequests||[], bundle.admissionRequests, 'id');
+  if (Array.isArray(bundle.accounts))          mergeArr(db.accounts,              bundle.accounts,          'id');
+  // Merge settings (keep existing, only fill missing keys)
+  if (bundle.settings && typeof bundle.settings === 'object') {
+    Object.keys(bundle.settings).forEach(k => {
+      if (db.settings[k] === undefined || db.settings[k] === null || db.settings[k] === '') {
+        db.settings[k] = bundle.settings[k];
+      }
+    });
   }
   writeDB(db);
-  res.json({ok:true, merged});
+  return merged;
+}
+
+// استيراد عبر JSON body (الطريقة القديمة)
+app.post('/api/sync/import', (req, res) => {
+  try {
+    const merged = _mergeBundle(req.body);
+    res.json({ ok: true, merged });
+  } catch(e) {
+    res.json({ ok: false, error: e.message });
+  }
+});
+
+// استيراد ملف backup.json عبر رفع ملف
+app.post('/api/sync/import-file', upload.single('file'), (req, res) => {
+  if (!req.file) return res.json({ ok: false, error: 'لم يتم استلام الملف' });
+  try {
+    let content;
+    // support both disk (path) and memory (buffer) multer modes
+    if (req.file.buffer) {
+      content = req.file.buffer.toString('utf8').replace(/^\uFEFF/, '');
+    } else {
+      const fs2 = require('fs');
+      content = fs2.readFileSync(req.file.path, 'utf8').replace(/^\uFEFF/, '');
+      try { fs2.unlinkSync(req.file.path); } catch(_) {}
+    }
+    const bundle = JSON.parse(content);
+    if (typeof bundle !== 'object' || Array.isArray(bundle)) {
+      return res.json({ ok: false, error: 'ملف غير صالح — يجب أن يكون ملف JSON للنسخة الاحتياطية' });
+    }
+    const merged = _mergeBundle(bundle);
+    res.json({ ok: true, merged });
+  } catch(e) {
+    res.json({ ok: false, error: 'خطأ في قراءة الملف: ' + e.message });
+  }
 });
 
 // ════════════════════════════════════════════════════════
@@ -3944,18 +3983,13 @@ setInterval(async () => {
   }
 }, 60 * 1000); // every 60 seconds
 
-initDB().then(() => {
-  app.listen(PORT, '0.0.0.0', () => {
-    const ip = getLocalIP();
-    console.log(`\n╔══════════════════════════════════════════╗`);
-    console.log(`║  ✅حلقات مجمع الخير — جاهز للعمل            ║`);
-    console.log(`║  http://localhost:${PORT}                    ║`);
-    console.log(`║  📱 شبكة محلية: http://${ip}:${PORT}  ║`);
-    console.log(`╚══════════════════════════════════════════╝\n`);
-  });
-}).catch(err => {
-  console.error('[DB] ✗ فشل الاتصال بـ Supabase:', err.message);
-  process.exit(1);
+app.listen(PORT, '0.0.0.0', () => {
+  const ip = getLocalIP();
+  console.log(`\n╔══════════════════════════════════════════╗`);
+  console.log(`║  ✅حلقات مجمع الخير — جاهز للعمل            ║`);
+  console.log(`║  http://localhost:${PORT}                    ║`);
+  console.log(`║  📱 شبكة محلية: http://${ip}:${PORT}  ║`);
+  console.log(`╚══════════════════════════════════════════╝\n`);
 });
 
 process.on('uncaughtException',     e => console.error('[CRASH] uncaughtException:', e));
