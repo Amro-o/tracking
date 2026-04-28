@@ -17,8 +17,6 @@ const https      = require('https');
 const os         = require('os');
 
 const { createClient } = require('@supabase/supabase-js');
-let compression; try { compression = require('compression'); } catch(e) { compression = null; }
-let sharp;       try { sharp       = require('sharp');       } catch(e) { sharp = null; }
 
 // اختياري: مكتبة QR
 let QRCode;
@@ -160,16 +158,10 @@ function writeKey(key, value) {
   _supabaseWriteKey(key, value).catch(e => console.error('[DB] async writeKey error:', e.message));
 }
 
-// saveDB(fn)          — full write (use only when multiple keys change)
-// saveDB(fn, 'key')   — single-key write (fast path, writes only that key to Supabase)
-function saveDB(fn, key) {
+function saveDB(fn) {
   const db = readDB();
   fn(db);
-  if (key) {
-    writeKey(key, db[key]);   // PERF: write only the changed key
-  } else {
-    writeDB(db);              // fallback: full write (multiple keys changed)
-  }
+  writeDB(db);
 }
 
 function newId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
@@ -735,49 +727,24 @@ const upload = multer({
 // أنشئ الحاوية مرة واحدة: Supabase → Storage → New bucket → uploads → Public
 const STORAGE_BUCKET = process.env.SUPABASE_BUCKET || 'uploads';
 async function uploadToSupabase(buffer, mimetype, originalName) {
-  let finalBuffer = buffer;
-  let finalMime   = mimetype;
-  let finalExt    = (originalName.split('.').pop() || 'bin').replace(/[^\w]/g, '');
-
-  // PERF: resize + compress images to WebP before storing
-  // Shrinks a typical phone photo from 3-8 MB down to ~50-100 KB
-  if (sharp && mimetype.startsWith('image/')) {
-    try {
-      finalBuffer = await sharp(buffer)
-        .resize(800, 800, { fit: 'inside', withoutEnlargement: true })
-        .webp({ quality: 82 })
-        .toBuffer();
-      finalMime = 'image/webp';
-      finalExt  = 'webp';
-    } catch(e) {
-      console.warn('[upload] sharp compression failed, using original:', e.message);
-    }
-  }
-
-  const filename = `${newId()}.${finalExt}`;
+  const ext      = (originalName.split('.').pop() || 'bin').replace(/[^\w]/g, '');
+  const filename = `${newId()}.${ext}`;
   const { error } = await _supabase.storage
     .from(STORAGE_BUCKET)
-    .upload(filename, finalBuffer, { contentType: finalMime, upsert: false });
+    .upload(filename, buffer, { contentType: mimetype, upsert: false });
   if (error) throw new Error('Supabase Storage error: ' + error.message);
   const { data } = _supabase.storage.from(STORAGE_BUCKET).getPublicUrl(filename);
   return data.publicUrl;
 }
 
 // ── Middleware ───────────────────────────────────────────
-// PERF: gzip all JSON/text responses (cuts response size 60–80%)
-if (compression) app.use(compression());
 app.use(express.json({ limit:'10mb' }));
 app.use(express.urlencoded({ extended:true }));
-// PERF: cache static assets for 1 day (JS, CSS, images)
-app.use('/uploads', express.static(UPLOADS_DIR, { maxAge: '1d' }));
+app.use('/uploads', express.static(UPLOADS_DIR));
 
 // خدمة الملفات الثابتة: أولاً app/ ثم المجلد الجذر
-// PERF: 1-day cache for CSS/JS/fonts/images, no-cache for HTML
-const _staticOpts = { maxAge: '1d', setHeaders(res, filePath) {
-  if (filePath.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache');
-}};
-if (fs.existsSync(APP_DIR)) app.use(express.static(APP_DIR, _staticOpts));
-app.use(express.static(ROOT_DIR, _staticOpts));
+if (fs.existsSync(APP_DIR)) app.use(express.static(APP_DIR));
+app.use(express.static(ROOT_DIR));
 
 // ════════════════════════════════════════════════════════
 //  SSE — Server-Sent Events (real-time push to clients)
@@ -1033,7 +1000,7 @@ app.get('/api/students', (_, res) => res.json(readDB().students));
 
 app.post('/api/students', (req, res) => {
   const id = newId();
-  saveDB(db => db.students.push({ ...req.body, id }), 'students');
+  saveDB(db => db.students.push({ ...req.body, id }));
   res.json({ id });
 });
 
@@ -1041,12 +1008,12 @@ app.put('/api/students/:id', (req, res) => {
   saveDB(db => {
     const i = db.students.findIndex(s => s.id === req.params.id);
     if (i>=0) db.students[i] = { ...db.students[i], ...req.body, id:req.params.id };
-  }, 'students');
+  });
   res.json({ ok:true });
 });
 
 app.delete('/api/students/:id', (req, res) => {
-  saveDB(db => { db.students = db.students.filter(s => s.id !== req.params.id); }, 'students');
+  saveDB(db => { db.students = db.students.filter(s => s.id !== req.params.id); });
   res.json({ ok:true });
 });
 
@@ -1156,7 +1123,7 @@ app.post('/api/quran-progress', (req, res) => {
   saveDB(db => {
     if (!db.quranProgress) db.quranProgress = [];
     db.quranProgress.push({ ...req.body, id });
-  }, 'quranProgress');
+  });
   res.json({ id });
 });
 
@@ -1164,12 +1131,12 @@ app.put('/api/quran-progress/:id', (req, res) => {
   saveDB(db => {
     const i = (db.quranProgress||[]).findIndex(p => p.id === req.params.id);
     if (i>=0) db.quranProgress[i] = { ...db.quranProgress[i], ...req.body, id:req.params.id };
-  }, 'quranProgress');
+  });
   res.json({ ok:true });
 });
 
 app.delete('/api/quran-progress/:id', (req, res) => {
-  saveDB(db => { db.quranProgress = (db.quranProgress||[]).filter(p => p.id !== req.params.id); }, 'quranProgress');
+  saveDB(db => { db.quranProgress = (db.quranProgress||[]).filter(p => p.id !== req.params.id); });
   res.json({ ok:true });
 });
 
@@ -1302,14 +1269,14 @@ app.post('/api/accounts/:id/photo', upload.single('photo'), async (req, res) => 
 // ════════════════════════════════════════════════════════
 app.get('/api/classes', (_, res) => res.json(readDB().classes));
 app.post('/api/classes', (req, res) => {
-  const id=newId(); saveDB(db=>db.classes.push({...req.body,id}), 'classes'); res.json({id});
+  const id=newId(); saveDB(db=>db.classes.push({...req.body,id})); res.json({id});
 });
 app.put('/api/classes/:id', (req, res) => {
-  saveDB(db=>{ const i=db.classes.findIndex(c=>c.id===req.params.id); if(i>=0) db.classes[i]={...db.classes[i],...req.body,id:req.params.id}; }, 'classes');
+  saveDB(db=>{ const i=db.classes.findIndex(c=>c.id===req.params.id); if(i>=0) db.classes[i]={...db.classes[i],...req.body,id:req.params.id}; });
   res.json({ok:true});
 });
 app.delete('/api/classes/:id', (req, res) => {
-  saveDB(db=>{ db.classes=db.classes.filter(c=>c.id!==req.params.id); }, 'classes'); res.json({ok:true});
+  saveDB(db=>{ db.classes=db.classes.filter(c=>c.id!==req.params.id); }); res.json({ok:true});
 });
 
 
@@ -1326,8 +1293,8 @@ app.get('/api/teachers/:id', (req, res) => {
     .filter(l => l.teacherId === t.id)
     .sort((a, b) => b.date.localeCompare(a.date));
 
-  const today    = nowDate();
-  const _nowStr  = nowTime();   // FIX: renamed — was `const nowTime = nowTime()` which shadowed the function
+  const today   = nowDate();
+  const nowTime = nowTime();
 
   // Duration per entry:
   //  • checkOut exists → actual duration
@@ -1340,7 +1307,7 @@ app.get('/api/teachers/:id', (req, res) => {
         mins = calcSessionMins(l.checkIn, l.checkOut);
       } else if (l.date === today) {
         const [h1,m1] = l.checkIn.split(':').map(Number);
-        const [h2,m2] = _nowStr.split(':').map(Number);
+        const [h2,m2] = nowTime.split(':').map(Number);
         mins = Math.max(0,(h2*60+m2)-(h1*60+m1));
       } else {
         mins = calcSessionMins(l.checkIn, null); // 4-hour fallback
@@ -1382,14 +1349,14 @@ app.get('/api/teachers/:id', (req, res) => {
   res.json({ ...t, log: logWithDuration, totalMins, daysPresent, monthlyMins, todayMins, todayLive, monthlyHistory });
 });
 app.post('/api/teachers', (req, res) => {
-  const id=newId(); saveDB(db=>db.teachers.push({...req.body,id}), 'teachers'); res.json({id});
+  const id=newId(); saveDB(db=>db.teachers.push({...req.body,id})); res.json({id});
 });
 app.put('/api/teachers/:id', (req, res) => {
-  saveDB(db=>{ const i=db.teachers.findIndex(t=>t.id===req.params.id); if(i>=0) db.teachers[i]={...db.teachers[i],...req.body,id:req.params.id}; }, 'teachers');
+  saveDB(db=>{ const i=db.teachers.findIndex(t=>t.id===req.params.id); if(i>=0) db.teachers[i]={...db.teachers[i],...req.body,id:req.params.id}; });
   res.json({ok:true});
 });
 app.delete('/api/teachers/:id', (req, res) => {
-  saveDB(db=>{ db.teachers=db.teachers.filter(t=>t.id!==req.params.id); }, 'teachers'); res.json({ok:true});
+  saveDB(db=>{ db.teachers=db.teachers.filter(t=>t.id!==req.params.id); }); res.json({ok:true});
 });
 
 
@@ -1452,12 +1419,12 @@ app.get('/api/holidays/check/:date', (req, res) => {
 
 app.post('/api/holidays', (req, res) => {
   const id=newId();
-  saveDB(db=>{ db.holidays=db.holidays.filter(h=>h.date!==req.body.date); db.holidays.push({...req.body,id}); }, 'holidays');
+  saveDB(db=>{ db.holidays=db.holidays.filter(h=>h.date!==req.body.date); db.holidays.push({...req.body,id}); });
   res.json({ok:true,id});
 });
 
 app.delete('/api/holidays/:date', (req, res) => {
-  saveDB(db=>{ db.holidays=db.holidays.filter(h=>h.date!==req.params.date); }, 'holidays'); res.json({ok:true});
+  saveDB(db=>{ db.holidays=db.holidays.filter(h=>h.date!==req.params.date); }); res.json({ok:true});
 });
 
 
@@ -1638,7 +1605,7 @@ app.put('/api/settings', (req, res) => {
     const {pin, ...rest} = req.body;
     if (pin) db.settings.pin = String(pin);
     Object.assign(db.settings, rest);
-  }, 'settings');
+  });
   res.json({ok:true});
 });
 
@@ -1847,8 +1814,6 @@ app.post('/api/whatsapp/send-bulk', async (req, res) => {
 
   if (!token) return res.json({ ok:false, error:'Fonnte Token غير مُعيَّن في الإعدادات' });
 
-  // PERF: collect log entries in memory, flush once after the loop
-  const newLogEntries = [];
   const results = []; let sent=0, failed=0;
   for (const r of records) {
     if (!r.phone) { results.push({ ok:false, error:'لا يوجد رقم هاتف' }); failed++; continue; }
@@ -1856,21 +1821,21 @@ app.post('/api/whatsapp/send-bulk', async (req, res) => {
     const result = await fonnteRequest(token, r.phone, msg);
     results.push(result);
 
-    newLogEntries.push({
+    // تسجيل في السجل
+    const db2 = readDB();
+    db2.waLog = db2.waLog || [];
+    db2.waLog.push({
       id: newId(), type:'absence', date,
       studentId: r.studentId||'', studentName: r.name,
       phone: r.phone, className: cls?.name||'', classId: classId||'',
       message: msg, status: result.ok ? 'sent' : 'failed',
       sentAt: new Date().toISOString(), error: result.error||''
     });
+    writeDB(db2);
 
     if (result.ok) sent++; else failed++;
     await new Promise(ok => setTimeout(ok, 800));
   }
-
-  // PERF: single Supabase write for all log entries (was N full writeDB calls)
-  saveDB(db2 => { db2.waLog = (db2.waLog || []).concat(newLogEntries); }, 'waLog');
-
   res.json({ results, sent, failed });
 });
 
@@ -2073,6 +2038,175 @@ app.post('/api/whatsapp/send-custom', async (req, res) => {
     await new Promise(ok=>setTimeout(ok,800));
   }
   res.json({results, sent, failed});
+});
+
+
+// ════════════════════════════════════════════════════════
+//  إرسال تقرير القرآن عبر واتساب (PDF → Supabase → Fonnte)
+// ════════════════════════════════════════════════════════
+
+// Fonnte supports sending a file URL in the same /send payload
+function fonnteRequestWithUrl(token, target, message, fileUrl) {
+  return new Promise(resolve => {
+    const raw = String(target||'').trim();
+    const cleanTarget = raw.endsWith('@g.us') ? raw : raw.replace(/\D/g,'');
+    if (!cleanTarget) return resolve({ ok:false, error:'رقم الهاتف فارغ أو غير صالح' });
+    const payload = { target: cleanTarget, message, url: fileUrl, delay:'2', countryCode:'966' };
+    const body = JSON.stringify(payload);
+    const opts = {
+      hostname: 'api.fonnte.com', path: '/send', method: 'POST',
+      headers: { 'Authorization': token, 'Content-Type':'application/json', 'Content-Length': Buffer.byteLength(body) }
+    };
+    const req = https.request(opts, resp => {
+      let data = '';
+      resp.on('data', c => data += c);
+      resp.on('end', () => {
+        try {
+          const j = JSON.parse(data);
+          resolve({ ok: j.status === true, error: j.reason || j.message || '', raw: data.slice(0,200) });
+        } catch(e) { resolve({ ok:false, error:'استجابة غير متوقعة من الخادم' }); }
+      });
+    });
+    req.on('error', e => resolve({ ok:false, error: e.message }));
+    req.write(body); req.end();
+  });
+}
+
+// Generate Quran progress PDF and return a buffer
+async function generateQuranPDF(db, studentId) {
+  const s = db.students.find(x => x.id === studentId);
+  if (!s) throw new Error('الطالب غير موجود');
+  const cls    = db.classes.find(c => c.id === s.classId);
+  const school = db.settings.schoolName || 'حضور الحلقات';
+  const entries = (db.quranProgress || [])
+    .filter(p => p.studentId === studentId)
+    .sort((a,b) => b.date.localeCompare(a.date));
+
+  const TYPE_AR = { memorization:'حفظ جديد', revision:'مراجعة', recitation:'تلاوة وتجويد' };
+  const cnt = { memorization:0, revision:0, recitation:0 };
+
+  return new Promise((resolve, reject) => {
+    const doc  = new PDFDocument({ margin:40, size:'A4', lang:'ar', marked:true });
+    const bufs = [];
+    doc.on('data', d => bufs.push(d));
+    doc.on('end',  () => resolve(Buffer.concat(bufs)));
+    doc.on('error', reject);
+
+    // Header
+    doc.rect(0,0,612,70).fill('#1D4ED8');
+    doc.fillColor('#ffffff').fontSize(16).text(school, 40, 18, { align:'center', width:532 });
+    doc.fontSize(11).text(`تقرير تقدم القرآن — ${s.name}${cls?' — '+cls.name:''}`, 40, 40, { align:'center', width:532 });
+
+    // Stats row
+    doc.fillColor('#1D4ED8').fontSize(9);
+    const stats = [
+      ['إجمالي الجلسات', entries.length, '#dcfce7','#166534'],
+      ['حفظ جديد',      (entries.filter(e=>e.type==='memorization')).length, '#f0fdf4','#166534'],
+      ['مراجعة',         (entries.filter(e=>e.type==='revision')).length,     '#eff6ff','#1e40af'],
+      ['تلاوة وتجويد',  (entries.filter(e=>e.type==='recitation')).length,    '#fffbeb','#92400e'],
+    ];
+    let sx = 40;
+    stats.forEach(([label, val, bg, fg]) => {
+      doc.rect(sx, 80, 118, 44).fill(bg);
+      doc.fillColor(fg).fontSize(18).text(String(val), sx, 88, { width:118, align:'center' });
+      doc.fontSize(8).text(label, sx, 108, { width:118, align:'center' });
+      sx += 128;
+    });
+
+    // Table
+    const COL = [70, 70, 100, 100, 35, 55, 55, 87]; // widths
+    const HDR = ['التاريخ','النوع','من','إلى','الجزء','الصفحات','التقييم','ملاحظات'];
+    let y = 140;
+
+    // Header row
+    doc.rect(40, y, 532, 20).fill('#1D4ED8');
+    let hx = 40;
+    HDR.forEach((h,i) => {
+      doc.fillColor('#ffffff').fontSize(8).text(h, hx+2, y+5, { width:COL[i]-4, align:'center' });
+      hx += COL[i];
+    });
+    y += 20;
+
+    if (!entries.length) {
+      doc.fillColor('#666').fontSize(11).text('لا توجد سجلات بعد.', 40, y+20, { align:'center', width:532 });
+    } else {
+      entries.slice(0, 35).forEach((p, i) => {
+        if (y > 760) { doc.addPage(); y = 40; }
+        const rowBg = i%2===0 ? '#f8fafc' : '#ffffff';
+        doc.rect(40, y, 532, 18).fill(rowBg);
+        const from  = [p.surahFromName, p.ayahFrom?`${p.ayahFrom}`:''].filter(Boolean).join(' آية ') || '—';
+        const to    = [p.surahToName,   p.ayahTo  ?`${p.ayahTo}`  :''].filter(Boolean).join(' آية ') || '—';
+        const pages = p.pageFrom ? (p.pageTo&&p.pageTo!==p.pageFrom?`${p.pageFrom}-${p.pageTo}`:`${p.pageFrom}`) : '—';
+        const cells = [p.date||'—', TYPE_AR[p.type]||p.type, from, to, p.juz||'—', pages, p.grade||'—', p.notes||'—'];
+        let cx = 40;
+        cells.forEach((v,ci) => {
+          doc.fillColor('#1e293b').fontSize(7.5).text(String(v), cx+2, y+4, { width:COL[ci]-4, align:'center', lineBreak:false });
+          cx += COL[ci];
+        });
+        y += 18;
+      });
+    }
+
+    // Footer
+    doc.moveTo(40, y+10).lineTo(572, y+10).strokeColor('#e2e8f0').stroke();
+    doc.fillColor('#94a3b8').fontSize(8)
+      .text(`${school} — تاريخ الإصدار: ${new Date().toLocaleDateString('ar-SA')}`, 40, y+14, { align:'center', width:532 });
+
+    doc.end();
+  });
+}
+
+app.post('/api/whatsapp/send-quran-pdf/:studentId', async (req, res) => {
+  const { studentId } = req.params;
+  const db    = readDB();
+  const token = db.settings.whatsappApiKey;
+  if (!token) return res.json({ ok:false, error:'Fonnte Token غير مُعيَّن في الإعدادات' });
+
+  const s = db.students.find(x => x.id === studentId);
+  if (!s) return res.status(404).json({ ok:false, error:'الطالب غير موجود' });
+
+  const phone = s.parentPhone;
+  if (!phone) return res.json({ ok:false, error:'لا يوجد رقم هاتف لولي الأمر في بيانات الطالب' });
+
+  try {
+    // 1 — Generate PDF
+    const pdfBuf = await generateQuranPDF(db, studentId);
+
+    // 2 — Upload to Supabase Storage (temp public file)
+    const filename = `quran-report-${studentId}-${Date.now()}.pdf`;
+    const { error: upErr } = await _supabase.storage
+      .from(STORAGE_BUCKET)
+      .upload(filename, pdfBuf, { contentType:'application/pdf', upsert:true });
+    if (upErr) throw new Error('فشل رفع الملف: ' + upErr.message);
+
+    const { data: urlData } = _supabase.storage.from(STORAGE_BUCKET).getPublicUrl(filename);
+    const pdfUrl = urlData.publicUrl;
+
+    // 3 — Build caption
+    const cls      = db.classes.find(c => c.id === s.classId);
+    const entries  = (db.quranProgress||[]).filter(p => p.studentId === studentId);
+    const caption  = `السلام عليكم،\n\nإليكم تقرير تقدم القرآن الكريم للطالب *${s.name}*${cls?' — حلقة '+cls.name:''}.\n\nإجمالي الجلسات: ${entries.length}\nحفظ جديد: ${entries.filter(e=>e.type==='memorization').length}\nمراجعة: ${entries.filter(e=>e.type==='revision').length}\n\n— ${db.settings.schoolName||'إدارة الحلقات'}`;
+
+    // 4 — Send via Fonnte
+    const result = await fonnteRequestWithUrl(token, phone, caption, pdfUrl);
+
+    // 5 — Log
+    saveDB(db2 => {
+      db2.waLog = db2.waLog || [];
+      db2.waLog.push({
+        id: newId(), type:'quran-pdf', date: new Date().toISOString().split('T')[0],
+        studentId, studentName: s.name, phone,
+        className: cls?.name||'', classId: s.classId||'',
+        message: caption, status: result.ok?'sent':'failed',
+        sentAt: new Date().toISOString(), error: result.error||''
+      });
+    }, 'waLog');
+
+    res.json({ ok: result.ok, error: result.error||'' });
+  } catch(e) {
+    console.error('[send-quran-pdf]', e.message);
+    res.status(500).json({ ok:false, error: e.message });
+  }
 });
 
 
