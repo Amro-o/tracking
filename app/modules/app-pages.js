@@ -281,12 +281,42 @@ async function viewTeacher(id) {
   }
 
   const DAY_AR = ['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت'];
-  const currentHijri = toHijri(todayISO());
+  const GM_AR  = ['','يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
+  const isGreg = getCalType() === 'gregorian';
+
+  // FIX: re-group logs by Gregorian month when calendar is set to Gregorian
+  function _buildMonthGroups() {
+    const allLogs = t.log || [];
+    if (!allLogs.length) return [];
+    if (!isGreg) return monthlyHistory; // server already grouped by Hijri — use as-is
+
+    // Group by Gregorian year-month
+    const map = {};
+    allLogs.forEach(l => {
+      if (!l.date) return;
+      const parts = l.date.split('-');
+      const key = parts[0] + '-' + parts[1]; // "YYYY-MM"
+      if (!map[key]) map[key] = { year: +parts[0], month: +parts[1], logs: [], totalMins: 0, days: 0 };
+      map[key].logs.push(l);
+      map[key].totalMins += l.durationMins || 0;
+      if (l.checkIn) map[key].days++;
+    });
+    return Object.values(map).sort((a, b) => a.year !== b.year ? b.year - a.year : b.month - a.month);
+  }
 
   function buildMonthBlocks() {
-    if (!monthlyHistory.length) return '<div class="info-banner">لا توجد سجلات حضور بعد.</div>';
-    return monthlyHistory.map(mon => {
-      const isCurrent = mon.year===currentHijri.year && mon.month===currentHijri.month;
+    const groups = _buildMonthGroups();
+    if (!groups.length) return '<div class="info-banner">لا توجد سجلات حضور بعد.</div>';
+    const todayParts = todayISO().split('-');
+    const curYear  = +todayParts[0], curMonth = +todayParts[1];
+    const curHijri = isGreg ? null : toHijri(todayISO());
+
+    return groups.map(mon => {
+      // FIX: isCurrent check respects calendar type
+      const isCurrent = isGreg
+        ? (mon.year === curYear && mon.month === curMonth)
+        : (mon.year === curHijri.year && mon.month === curHijri.month);
+
       const bid = 'tpMonth_'+t.id+'_'+mon.year+'_'+mon.month;
       const rows = mon.logs.map(l => {
         const d = new Date(l.date+'T00:00:00');
@@ -308,10 +338,16 @@ async function viewTeacher(id) {
       }).join('');
       const th=Math.floor(mon.totalMins/60), tm=mon.totalMins%60;
       const tot=mon.totalMins>0?(th>0?th+'س ':'')+( tm>0?tm+'د':(th>0?'':'—')):'—';
+
+      // FIX: month header label respects calendar type
+      const monthLabel = isGreg
+        ? `${GM_AR[mon.month]} ${mon.year}`
+        : `${mon.monthName || ''} ${mon.year}هـ`;
+
       return `<div class="tp-month-block ${isCurrent?'tp-month-current':''}">
         <div class="tp-month-header" onclick="tpToggleMonth('${bid}')">
           <div class="tp-month-header-right">
-            <span class="tp-month-name">${mon.monthName} ${mon.year}هـ</span>
+            <span class="tp-month-name">${monthLabel}</span>
             ${isCurrent?'<span class="tp-month-badge-current">الشهر الحالي</span>':''}
           </div>
           <div class="tp-month-header-meta">
@@ -881,6 +917,16 @@ async function changePin() {
   if (currentRole === 'admin') {
     await apiFetch('/settings', { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ pin: newPin }) });
   }
+  // FIX: update stored fingerprint PIN so biometric login still works after password change
+  if (localStorage.getItem('halaqat_bio_pin')) {
+    localStorage.setItem('halaqat_bio_pin', newPin);
+  }
+  // Also keep the saved user credential in sync
+  try {
+    const saved = JSON.parse(localStorage.getItem('halaqat_saved_user') || 'null');
+    if (saved) { saved.password = newPin; localStorage.setItem('halaqat_saved_user', JSON.stringify(saved)); }
+  } catch(e) {}
+
   statusEl.style.color = 'var(--success)'; statusEl.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-left:3px;flex-shrink:0"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> تم تغيير كلمة المرور!';
   ['settOldPin','settNewPin','settConfPin'].forEach(id => document.getElementById(id).value = '');
   setTimeout(() => statusEl.textContent = '', 3000);
