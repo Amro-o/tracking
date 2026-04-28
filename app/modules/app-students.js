@@ -731,7 +731,7 @@ async function viewStudent(id) {
         <button class="btn-secondary" style="font-size:12px;padding:5px 10px" onclick="window.open('${API}/reports/attendance/student/${s.id}','_blank')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-left:3px;flex-shrink:0"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg> حضور Excel</button>
         <button class="btn-secondary" style="font-size:12px;padding:5px 10px" onclick="window.open('${API}/reports/quran/student/${s.id}','_blank')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-left:3px;flex-shrink:0"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg> قرآن Excel</button>
         <button class="btn-secondary" style="font-size:12px;padding:5px 10px" onclick="window.open('${API}/print/quran/student/${s.id}','_blank')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-left:3px;flex-shrink:0"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg> طباعة</button>
-        <button id="sendQuranWABtn_${s.id}" style="font-size:12px;padding:5px 10px;background:#22c55e;color:#fff;border:1px solid #16a34a;border-radius:6px;cursor:pointer;display:inline-flex;align-items:center;gap:4px" onclick="sendQuranReportWA('${s.id}','${(s.name||'').replace(/\\/g,'').replace(/'/g,'').replace(/"/g,'')}','${s.parentPhone||''}')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> إرسال لولي الأمر واتساب</button>
+        <button id="sendQuranWABtn_${s.id}" onclick="sendQuranReportWA('${s.id}')" style="font-size:12px;padding:5px 10px;background:#22c55e;color:#fff;border:1px solid #16a34a;border-radius:6px;cursor:pointer;display:inline-flex;align-items:center;gap:4px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> إرسال لولي الأمر واتساب</button>
         <button class="btn-secondary" style="font-size:12px;padding:5px 10px" onclick="closeModal('studentDetailModal');openProgressModal('${s.id}')">+ تسجيل تقدم</button>
       </div>
     </div>
@@ -1193,7 +1193,10 @@ function _studentBulkUpdateCount() {
   if (countEl)  countEl.textContent = `${n} محدد`;
   if (delBtn)   delBtn.disabled   = n === 0;
   if (printBtn) printBtn.disabled = n === 0;
-  if (waBtn)    waBtn.disabled    = n === 0;
+  if (waBtn) {
+    waBtn.disabled = n === 0;
+    waBtn.style.opacity = n === 0 ? '0.5' : '1';
+  }
 }
 
 async function studentBulkDelete() {
@@ -1602,67 +1605,99 @@ function _printStudentProfiles(students) {
 //  إرسال تقرير القرآن واتساب — فردي وجماعي
 // ════════════════════════════════════════════════════════
 
-async function sendQuranReportWA(studentId, studentName, parentPhone) {
+async function sendQuranReportWA(studentId) {
+  // Look up student from state — no fragile string passing
+  const s = state.students.find(x => x.id === studentId);
+  if (!s) { alert('لم يتم العثور على بيانات الطالب'); return; }
+
   if (!state.settings?.whatsappApiKey) {
-    toast('⚠️ يرجى إعداد Fonnte Token في الإعدادات أولاً'); return;
+    alert('يرجى إعداد Fonnte Token في الإعدادات أولاً'); return;
   }
-  if (!parentPhone || parentPhone === 'undefined' || parentPhone === '') {
-    toast('⚠️ لا يوجد رقم هاتف لولي الأمر في بيانات الطالب'); return;
+  if (!s.parentPhone) {
+    alert('لا يوجد رقم هاتف لولي الأمر في بيانات الطالب ' + s.name); return;
   }
-  const btn      = document.getElementById(`sendQuranWABtn_${studentId}`);
+
+  const btn = document.getElementById('sendQuranWABtn_' + studentId);
   const origHTML = btn ? btn.innerHTML : '';
   if (btn) { btn.disabled = true; btn.textContent = '⏳ جارٍ الإرسال…'; }
+
   try {
-    const res = await apiFetch(`/whatsapp/send-quran-pdf/${studentId}`, { method: 'POST' });
-    if (res?.ok) {
-      toast(`✅ تم إرسال تقرير القرآن لولي أمر ${studentName}`);
-      if (btn) { btn.textContent = '✅ تم الإرسال'; btn.style.background = '#166534'; btn.style.borderColor = '#166534'; }
+    const res = await apiFetch('/whatsapp/send-quran-pdf/' + studentId, { method: 'POST' });
+    if (res && res.ok) {
+      alert('✅ تم إرسال تقرير القرآن لولي أمر ' + s.name);
+      if (btn) {
+        btn.textContent = '✅ تم الإرسال';
+        btn.style.background  = '#15803d';
+        btn.style.borderColor = '#15803d';
+      }
     } else {
-      toast(`❌ فشل الإرسال: ${res?.error || 'خطأ غير معروف'}`);
+      const err = (res && res.error) ? res.error : 'خطأ غير معروف';
+      alert('❌ فشل الإرسال: ' + err);
       if (btn) { btn.disabled = false; btn.innerHTML = origHTML; }
     }
-  } catch(e) {
-    toast('❌ خطأ في الاتصال بالخادم');
+  } catch (e) {
+    alert('❌ خطأ في الاتصال بالخادم: ' + e.message);
     if (btn) { btn.disabled = false; btn.innerHTML = origHTML; }
   }
 }
 
 async function studentBulkSendQuranWA() {
   const ids = [..._studentBulkSelected];
-  if (!ids.length) return;
+  if (!ids.length) { alert('لم يتم تحديد أي طالب'); return; }
+
   if (!state.settings?.whatsappApiKey) {
-    toast('⚠️ يرجى إعداد Fonnte Token في الإعدادات أولاً'); return;
+    alert('يرجى إعداد Fonnte Token في الإعدادات أولاً'); return;
   }
+
   const students  = ids.map(id => state.students.find(s => s.id === id)).filter(Boolean);
   const noPhone   = students.filter(s => !s.parentPhone);
   const withPhone = students.filter(s =>  s.parentPhone);
-  if (!withPhone.length) { toast('⚠️ لا يوجد رقم هاتف لولي الأمر لأي طالب محدد'); return; }
 
-  const msg = `سيتم إرسال تقرير تقدم القرآن لـ ${withPhone.length} طالب.`
-    + (noPhone.length ? `\n\n⚠️ ${noPhone.length} طالب بدون رقم هاتف سيُتخطَّون:\n${noPhone.map(s=>s.name).join('، ')}` : '')
-    + '\n\nهل تريد المتابعة؟';
-  if (!confirm(msg)) return;
-
-  const waBtn = document.getElementById('studentBulkWABtn');
-  if (waBtn) { waBtn.disabled = true; waBtn.textContent = `0 / ${withPhone.length}`; }
-
-  let sent = 0, failed = 0, failedNames = [];
-  for (const s of withPhone) {
-    try {
-      const res = await apiFetch(`/whatsapp/send-quran-pdf/${s.id}`, { method:'POST' });
-      if (res?.ok) sent++; else { failed++; failedNames.push(s.name); }
-    } catch(e) { failed++; failedNames.push(s.name); }
-    if (waBtn) waBtn.textContent = `${sent + failed} / ${withPhone.length}`;
-    if (sent + failed < withPhone.length) await new Promise(r => setTimeout(r, 1200));
+  if (!withPhone.length) {
+    alert('لا يوجد رقم هاتف لولي الأمر لأي طالب محدد'); return;
   }
 
-  toast(failed === 0
-    ? `✅ تم إرسال تقرير القرآن لـ ${sent} طالب بنجاح`
-    : `✅ ${sent} تم   ❌ ${failed} فشل: ${failedNames.slice(0,3).join('، ')}${failedNames.length>3?'…':''}`
-  );
+  let confirmMsg = 'سيتم إرسال تقرير تقدم القرآن لـ ' + withPhone.length + ' طالب.';
+  if (noPhone.length) {
+    confirmMsg += '\n\n⚠️ ' + noPhone.length + ' طالب بدون رقم هاتف سيُتخطَّون:\n' + noPhone.map(s => s.name).join('، ');
+  }
+  confirmMsg += '\n\nهل تريد المتابعة؟';
+  if (!confirm(confirmMsg)) return;
+
+  const waBtn = document.getElementById('studentBulkWABtn');
+  if (waBtn) { waBtn.disabled = true; waBtn.textContent = '0 / ' + withPhone.length; }
+
+  let sent = 0, failed = 0, failedNames = [];
+
+  for (const s of withPhone) {
+    try {
+      const res = await apiFetch('/whatsapp/send-quran-pdf/' + s.id, { method: 'POST' });
+      if (res && res.ok) {
+        sent++;
+      } else {
+        failed++;
+        failedNames.push(s.name);
+      }
+    } catch (e) {
+      failed++;
+      failedNames.push(s.name);
+    }
+    if (waBtn) waBtn.textContent = (sent + failed) + ' / ' + withPhone.length;
+    if (sent + failed < withPhone.length) {
+      await new Promise(r => setTimeout(r, 1200));
+    }
+  }
+
+  if (failed === 0) {
+    alert('✅ تم إرسال تقرير القرآن لـ ' + sent + ' طالب بنجاح');
+  } else {
+    alert('✅ ' + sent + ' تم الإرسال\n❌ ' + failed + ' فشل:\n' + failedNames.join('، '));
+  }
+
   if (waBtn) {
     waBtn.disabled = _studentBulkSelected.size === 0;
-    waBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-left:3px"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> إرسال تقرير القرآن واتساب`;
+    waBtn.style.opacity = waBtn.disabled ? '0.5' : '1';
+    waBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-left:3px"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> إرسال تقرير القرآن واتساب';
   }
 }
 
