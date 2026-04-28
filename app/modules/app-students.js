@@ -727,12 +727,12 @@ async function viewStudent(id) {
     <div class="section-title" style="margin-top:4px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-left:3px;flex-shrink:0"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg> تقدم القرآن</div>
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:8px;flex-wrap:wrap">
       <div style="font-size:13px;color:var(--text2)">آخر موقع: <strong style="color:var(--primary)">${qpProgress}</strong></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn-secondary" style="font-size:12px;padding:5px 12px" onclick="window.open('${API}/reports/attendance/student/${s.id}','_blank')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-left:3px;flex-shrink:0"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg> سجل الحضور Excel</button>
-        <button class="btn-secondary" style="font-size:12px;padding:5px 12px" onclick="window.open('${API}/reports/quran/student/${s.id}','_blank')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-left:3px;flex-shrink:0"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg> تقرير القرآن Excel</button>
-        <button class="btn-secondary" style="font-size:12px;padding:5px 12px" onclick="window.open('${API}/print/quran/student/${s.id}','_blank')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-left:3px;flex-shrink:0"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg> طباعة</button>
-        <button style="font-size:12px;padding:5px 12px;background:#25D366;color:#fff;border:1px solid #25D366;border-radius:6px;cursor:pointer;display:inline-flex;align-items:center;gap:4px" onclick="sendQuranReportWA('${s.id}','${(s.name||'').replace(/'/g,"\\'").replace(/"/g,'&quot;')}','${s.parentPhone||''}')" id="sendQuranWABtn_${s.id}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> إرسال لولي الأمر واتساب</button>
-        <button class="btn-secondary" style="font-size:12px;padding:5px 12px" onclick="closeModal('studentDetailModal');openProgressModal('${s.id}')">+ تسجيل تقدم</button>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn-secondary" style="font-size:12px;padding:5px 10px" onclick="window.open('${API}/reports/attendance/student/${s.id}','_blank')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-left:3px;flex-shrink:0"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg> حضور Excel</button>
+        <button class="btn-secondary" style="font-size:12px;padding:5px 10px" onclick="window.open('${API}/reports/quran/student/${s.id}','_blank')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-left:3px;flex-shrink:0"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg> قرآن Excel</button>
+        <button class="btn-secondary" style="font-size:12px;padding:5px 10px" onclick="window.open('${API}/print/quran/student/${s.id}','_blank')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-left:3px;flex-shrink:0"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg> طباعة</button>
+        <button id="sendQuranWABtn_${s.id}" style="font-size:12px;padding:5px 10px;background:#22c55e;color:#fff;border:1px solid #16a34a;border-radius:6px;cursor:pointer;display:inline-flex;align-items:center;gap:4px" onclick="sendQuranReportWA('${s.id}','${(s.name||'').replace(/\\/g,'').replace(/'/g,'').replace(/"/g,'')}','${s.parentPhone||''}')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> إرسال لولي الأمر واتساب</button>
+        <button class="btn-secondary" style="font-size:12px;padding:5px 10px" onclick="closeModal('studentDetailModal');openProgressModal('${s.id}')">+ تسجيل تقدم</button>
       </div>
     </div>
     ${qpList && qpList.length ? `
@@ -1595,24 +1595,28 @@ function _printStudentProfiles(students) {
 }
 
 // ════════════════════════════════════════════════════════
-//  إرسال تقرير القرآن — فردي وجماعي
+//  Update bulk count to enable/disable print button too
+// ════════════════════════════════════════════════════════
+
+// ════════════════════════════════════════════════════════
+//  إرسال تقرير القرآن واتساب — فردي وجماعي
 // ════════════════════════════════════════════════════════
 
 async function sendQuranReportWA(studentId, studentName, parentPhone) {
   if (!state.settings?.whatsappApiKey) {
     toast('⚠️ يرجى إعداد Fonnte Token في الإعدادات أولاً'); return;
   }
-  if (!parentPhone) {
+  if (!parentPhone || parentPhone === 'undefined' || parentPhone === '') {
     toast('⚠️ لا يوجد رقم هاتف لولي الأمر في بيانات الطالب'); return;
   }
-  const btn = document.getElementById(`sendQuranWABtn_${studentId}`);
+  const btn      = document.getElementById(`sendQuranWABtn_${studentId}`);
   const origHTML = btn ? btn.innerHTML : '';
-  if (btn) { btn.disabled = true; btn.innerHTML = '⏳ جارٍ الإرسال…'; }
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ جارٍ الإرسال…'; }
   try {
-    const res = await apiFetch(`/whatsapp/send-quran-pdf/${studentId}`, { method:'POST' });
+    const res = await apiFetch(`/whatsapp/send-quran-pdf/${studentId}`, { method: 'POST' });
     if (res?.ok) {
       toast(`✅ تم إرسال تقرير القرآن لولي أمر ${studentName}`);
-      if (btn) { btn.innerHTML = '✅ تم الإرسال'; btn.style.background='#166534'; btn.style.borderColor='#166534'; }
+      if (btn) { btn.textContent = '✅ تم الإرسال'; btn.style.background = '#166534'; btn.style.borderColor = '#166534'; }
     } else {
       toast(`❌ فشل الإرسال: ${res?.error || 'خطأ غير معروف'}`);
       if (btn) { btn.disabled = false; btn.innerHTML = origHTML; }
@@ -1634,10 +1638,10 @@ async function studentBulkSendQuranWA() {
   const withPhone = students.filter(s =>  s.parentPhone);
   if (!withPhone.length) { toast('⚠️ لا يوجد رقم هاتف لولي الأمر لأي طالب محدد'); return; }
 
-  const confirmMsg = `سيتم إرسال تقرير تقدم القرآن لـ ${withPhone.length} طالب.`
+  const msg = `سيتم إرسال تقرير تقدم القرآن لـ ${withPhone.length} طالب.`
     + (noPhone.length ? `\n\n⚠️ ${noPhone.length} طالب بدون رقم هاتف سيُتخطَّون:\n${noPhone.map(s=>s.name).join('، ')}` : '')
     + '\n\nهل تريد المتابعة؟';
-  if (!confirm(confirmMsg)) return;
+  if (!confirm(msg)) return;
 
   const waBtn = document.getElementById('studentBulkWABtn');
   if (waBtn) { waBtn.disabled = true; waBtn.textContent = `0 / ${withPhone.length}`; }
@@ -1647,16 +1651,15 @@ async function studentBulkSendQuranWA() {
     try {
       const res = await apiFetch(`/whatsapp/send-quran-pdf/${s.id}`, { method:'POST' });
       if (res?.ok) sent++; else { failed++; failedNames.push(s.name); }
-    } catch(e)   { failed++; failedNames.push(s.name); }
+    } catch(e) { failed++; failedNames.push(s.name); }
     if (waBtn) waBtn.textContent = `${sent + failed} / ${withPhone.length}`;
     if (sent + failed < withPhone.length) await new Promise(r => setTimeout(r, 1200));
   }
 
-  if (failed === 0) {
-    toast(`✅ تم إرسال تقرير القرآن لـ ${sent} طالب بنجاح`);
-  } else {
-    toast(`✅ ${sent} تم   ❌ ${failed} فشل: ${failedNames.slice(0,3).join('، ')}${failedNames.length>3?'…':''}`);
-  }
+  toast(failed === 0
+    ? `✅ تم إرسال تقرير القرآن لـ ${sent} طالب بنجاح`
+    : `✅ ${sent} تم   ❌ ${failed} فشل: ${failedNames.slice(0,3).join('، ')}${failedNames.length>3?'…':''}`
+  );
   if (waBtn) {
     waBtn.disabled = _studentBulkSelected.size === 0;
     waBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-left:3px"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> إرسال تقرير القرآن واتساب`;
