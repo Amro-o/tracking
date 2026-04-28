@@ -1293,8 +1293,8 @@ app.get('/api/teachers/:id', (req, res) => {
     .filter(l => l.teacherId === t.id)
     .sort((a, b) => b.date.localeCompare(a.date));
 
-  const today   = nowDate();
-  const nowTime = nowTime();
+  const today    = nowDate();
+  const _nowStr  = nowTime(); // FIX: was `const nowTime = nowTime()` — shadowed the function → crash
 
   // Duration per entry:
   //  • checkOut exists → actual duration
@@ -1307,7 +1307,7 @@ app.get('/api/teachers/:id', (req, res) => {
         mins = calcSessionMins(l.checkIn, l.checkOut);
       } else if (l.date === today) {
         const [h1,m1] = l.checkIn.split(':').map(Number);
-        const [h2,m2] = nowTime.split(':').map(Number);
+        const [h2,m2] = _nowStr.split(':').map(Number);
         mins = Math.max(0,(h2*60+m2)-(h1*60+m1));
       } else {
         mins = calcSessionMins(l.checkIn, null); // 4-hour fallback
@@ -2045,7 +2045,6 @@ app.post('/api/whatsapp/send-custom', async (req, res) => {
 //  إرسال تقرير القرآن عبر واتساب (PDF → Supabase → Fonnte)
 // ════════════════════════════════════════════════════════
 
-// Fonnte supports sending a file URL in the same /send payload
 function fonnteRequestWithUrl(token, target, message, fileUrl) {
   return new Promise(resolve => {
     const raw = String(target||'').trim();
@@ -2072,7 +2071,6 @@ function fonnteRequestWithUrl(token, target, message, fileUrl) {
   });
 }
 
-// Generate Quran progress PDF and return a buffer
 async function generateQuranPDF(db, studentId) {
   const s = db.students.find(x => x.id === studentId);
   if (!s) throw new Error('الطالب غير موجود');
@@ -2083,75 +2081,75 @@ async function generateQuranPDF(db, studentId) {
     .sort((a,b) => b.date.localeCompare(a.date));
 
   const TYPE_AR = { memorization:'حفظ جديد', revision:'مراجعة', recitation:'تلاوة وتجويد' };
-  const cnt = { memorization:0, revision:0, recitation:0 };
 
   return new Promise((resolve, reject) => {
-    const doc  = new PDFDocument({ margin:40, size:'A4', lang:'ar', marked:true });
+    const doc  = new PDFDocument({ margin:40, size:'A4' });
     const bufs = [];
     doc.on('data', d => bufs.push(d));
     doc.on('end',  () => resolve(Buffer.concat(bufs)));
     doc.on('error', reject);
 
-    // Header
-    doc.rect(0,0,612,70).fill('#1D4ED8');
-    doc.fillColor('#ffffff').fontSize(16).text(school, 40, 18, { align:'center', width:532 });
-    doc.fontSize(11).text(`تقرير تقدم القرآن — ${s.name}${cls?' — '+cls.name:''}`, 40, 40, { align:'center', width:532 });
+    // ── Header ───────────────────────────────────────────
+    doc.rect(0,0,612,68).fill('#1D4ED8');
+    doc.fillColor('#ffffff').fontSize(16)
+       .text(school, 40, 16, { align:'center', width:532 });
+    doc.fontSize(11)
+       .text(`تقرير تقدم القرآن — ${s.name}${cls?' — '+cls.name:''}`, 40, 38, { align:'center', width:532 });
 
-    // Stats row
-    doc.fillColor('#1D4ED8').fontSize(9);
+    // ── Stats row ─────────────────────────────────────────
     const stats = [
-      ['إجمالي الجلسات', entries.length, '#dcfce7','#166534'],
-      ['حفظ جديد',      (entries.filter(e=>e.type==='memorization')).length, '#f0fdf4','#166534'],
-      ['مراجعة',         (entries.filter(e=>e.type==='revision')).length,     '#eff6ff','#1e40af'],
-      ['تلاوة وتجويد',  (entries.filter(e=>e.type==='recitation')).length,    '#fffbeb','#92400e'],
+      ['إجمالي الجلسات',  entries.length,                                    '#eff6ff','#1e40af'],
+      ['حفظ جديد',        entries.filter(e=>e.type==='memorization').length, '#f0fdf4','#166534'],
+      ['مراجعة',           entries.filter(e=>e.type==='revision').length,     '#fefce8','#854d0e'],
+      ['تلاوة وتجويد',    entries.filter(e=>e.type==='recitation').length,    '#fdf4ff','#7e22ce'],
     ];
     let sx = 40;
     stats.forEach(([label, val, bg, fg]) => {
-      doc.rect(sx, 80, 118, 44).fill(bg);
-      doc.fillColor(fg).fontSize(18).text(String(val), sx, 88, { width:118, align:'center' });
-      doc.fontSize(8).text(label, sx, 108, { width:118, align:'center' });
+      doc.rect(sx, 78, 118, 40).fill(bg);
+      doc.fillColor(fg).fontSize(17).text(String(val), sx, 84, { width:118, align:'center' });
+      doc.fontSize(7.5).text(label,                   sx, 103, { width:118, align:'center' });
       sx += 128;
     });
 
-    // Table
-    const COL = [70, 70, 100, 100, 35, 55, 55, 87]; // widths
+    // ── Table ─────────────────────────────────────────────
+    const COL = [62, 62, 95, 95, 32, 52, 52, 102];
     const HDR = ['التاريخ','النوع','من','إلى','الجزء','الصفحات','التقييم','ملاحظات'];
-    let y = 140;
+    let y = 132;
 
-    // Header row
-    doc.rect(40, y, 532, 20).fill('#1D4ED8');
+    doc.rect(40, y, 532, 18).fill('#1D4ED8');
     let hx = 40;
     HDR.forEach((h,i) => {
-      doc.fillColor('#ffffff').fontSize(8).text(h, hx+2, y+5, { width:COL[i]-4, align:'center' });
+      doc.fillColor('#fff').fontSize(7.5).text(h, hx+2, y+4, { width:COL[i]-4, align:'center' });
       hx += COL[i];
     });
-    y += 20;
+    y += 18;
 
     if (!entries.length) {
-      doc.fillColor('#666').fontSize(11).text('لا توجد سجلات بعد.', 40, y+20, { align:'center', width:532 });
+      doc.fillColor('#64748b').fontSize(11)
+         .text('لا توجد سجلات بعد.', 40, y+20, { align:'center', width:532 });
     } else {
-      entries.slice(0, 35).forEach((p, i) => {
+      entries.slice(0, 34).forEach((p, i) => {
         if (y > 760) { doc.addPage(); y = 40; }
-        const rowBg = i%2===0 ? '#f8fafc' : '#ffffff';
-        doc.rect(40, y, 532, 18).fill(rowBg);
-        const from  = [p.surahFromName, p.ayahFrom?`${p.ayahFrom}`:''].filter(Boolean).join(' آية ') || '—';
-        const to    = [p.surahToName,   p.ayahTo  ?`${p.ayahTo}`  :''].filter(Boolean).join(' آية ') || '—';
-        const pages = p.pageFrom ? (p.pageTo&&p.pageTo!==p.pageFrom?`${p.pageFrom}-${p.pageTo}`:`${p.pageFrom}`) : '—';
-        const cells = [p.date||'—', TYPE_AR[p.type]||p.type, from, to, p.juz||'—', pages, p.grade||'—', p.notes||'—'];
+        doc.rect(40, y, 532, 17).fill(i%2===0 ? '#f8fafc' : '#fff');
+        const from  = [p.surahFromName, p.ayahFrom ? `آية ${p.ayahFrom}` : ''].filter(Boolean).join(' ') || '—';
+        const to    = [p.surahToName,   p.ayahTo   ? `آية ${p.ayahTo}`   : ''].filter(Boolean).join(' ') || '—';
+        const pages = p.pageFrom ? (p.pageTo && p.pageTo!==p.pageFrom ? `${p.pageFrom}-${p.pageTo}` : `${p.pageFrom}`) : '—';
+        const cells = [p.date||'—', TYPE_AR[p.type]||p.type||'—', from, to, p.juz||'—', pages, p.grade||'—', p.notes||'—'];
         let cx = 40;
-        cells.forEach((v,ci) => {
-          doc.fillColor('#1e293b').fontSize(7.5).text(String(v), cx+2, y+4, { width:COL[ci]-4, align:'center', lineBreak:false });
+        cells.forEach((v, ci) => {
+          doc.fillColor('#1e293b').fontSize(7)
+             .text(String(v), cx+2, y+3, { width:COL[ci]-4, align:'center', lineBreak:false });
           cx += COL[ci];
         });
-        y += 18;
+        y += 17;
       });
     }
 
-    // Footer
-    doc.moveTo(40, y+10).lineTo(572, y+10).strokeColor('#e2e8f0').stroke();
-    doc.fillColor('#94a3b8').fontSize(8)
-      .text(`${school} — تاريخ الإصدار: ${new Date().toLocaleDateString('ar-SA')}`, 40, y+14, { align:'center', width:532 });
-
+    // ── Footer ────────────────────────────────────────────
+    doc.moveTo(40, y+8).lineTo(572, y+8).strokeColor('#e2e8f0').lineWidth(0.5).stroke();
+    doc.fillColor('#94a3b8').fontSize(7.5)
+       .text(`${school} — تاريخ الإصدار: ${new Date().toLocaleDateString('ar-SA')}`,
+             40, y+12, { align:'center', width:532 });
     doc.end();
   });
 }
@@ -2164,48 +2162,36 @@ app.post('/api/whatsapp/send-quran-pdf/:studentId', async (req, res) => {
 
   const s = db.students.find(x => x.id === studentId);
   if (!s) return res.status(404).json({ ok:false, error:'الطالب غير موجود' });
-
-  const phone = s.parentPhone;
-  if (!phone) return res.json({ ok:false, error:'لا يوجد رقم هاتف لولي الأمر في بيانات الطالب' });
+  if (!s.parentPhone) return res.json({ ok:false, error:'لا يوجد رقم هاتف لولي الأمر في بيانات الطالب' });
 
   try {
-    // 1 — Generate PDF
-    const pdfBuf = await generateQuranPDF(db, studentId);
-
-    // 2 — Upload to Supabase Storage (temp public file)
-    const filename = `quran-report-${studentId}-${Date.now()}.pdf`;
+    const pdfBuf  = await generateQuranPDF(db, studentId);
+    const filename = `quran-${studentId}-${Date.now()}.pdf`;
     const { error: upErr } = await _supabase.storage
       .from(STORAGE_BUCKET)
       .upload(filename, pdfBuf, { contentType:'application/pdf', upsert:true });
     if (upErr) throw new Error('فشل رفع الملف: ' + upErr.message);
 
     const { data: urlData } = _supabase.storage.from(STORAGE_BUCKET).getPublicUrl(filename);
-    const pdfUrl = urlData.publicUrl;
+    const cls     = db.classes.find(c => c.id === s.classId);
+    const entries = (db.quranProgress||[]).filter(p => p.studentId === studentId);
+    const caption = `السلام عليكم،\n\nإليكم تقرير تقدم القرآن الكريم للطالب *${s.name}*${cls?' — حلقة '+cls.name:''}.\n\nإجمالي الجلسات: ${entries.length}\nحفظ جديد: ${entries.filter(e=>e.type==='memorization').length}\nمراجعة: ${entries.filter(e=>e.type==='revision').length}\n\n— ${db.settings.schoolName||'إدارة الحلقات'}`;
 
-    // 3 — Build caption
-    const cls      = db.classes.find(c => c.id === s.classId);
-    const entries  = (db.quranProgress||[]).filter(p => p.studentId === studentId);
-    const caption  = `السلام عليكم،\n\nإليكم تقرير تقدم القرآن الكريم للطالب *${s.name}*${cls?' — حلقة '+cls.name:''}.\n\nإجمالي الجلسات: ${entries.length}\nحفظ جديد: ${entries.filter(e=>e.type==='memorization').length}\nمراجعة: ${entries.filter(e=>e.type==='revision').length}\n\n— ${db.settings.schoolName||'إدارة الحلقات'}`;
+    const result = await fonnteRequestWithUrl(token, s.parentPhone, caption, urlData.publicUrl);
 
-    // 4 — Send via Fonnte
-    const result = await fonnteRequestWithUrl(token, phone, caption, pdfUrl);
-
-    // 5 — Log
     saveDB(db2 => {
       db2.waLog = db2.waLog || [];
-      db2.waLog.push({
-        id: newId(), type:'quran-pdf', date: new Date().toISOString().split('T')[0],
-        studentId, studentName: s.name, phone,
-        className: cls?.name||'', classId: s.classId||'',
-        message: caption, status: result.ok?'sent':'failed',
-        sentAt: new Date().toISOString(), error: result.error||''
-      });
+      db2.waLog.push({ id:newId(), type:'quran-pdf', date:nowDate(),
+        studentId, studentName:s.name, phone:s.parentPhone,
+        className:cls?.name||'', classId:s.classId||'',
+        message:caption, status:result.ok?'sent':'failed',
+        sentAt:new Date().toISOString(), error:result.error||'' });
     }, 'waLog');
 
-    res.json({ ok: result.ok, error: result.error||'' });
+    res.json({ ok:result.ok, error:result.error||'' });
   } catch(e) {
     console.error('[send-quran-pdf]', e.message);
-    res.status(500).json({ ok:false, error: e.message });
+    res.status(500).json({ ok:false, error:e.message });
   }
 });
 
