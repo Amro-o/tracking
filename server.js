@@ -1294,7 +1294,7 @@ app.get('/api/teachers/:id', (req, res) => {
     .sort((a, b) => b.date.localeCompare(a.date));
 
   const today   = nowDate();
-  const _nowStr = nowTime(); // FIX: was `const nowTime = nowTime()` — crashed every teacher request
+  const _nowStr = nowTime(); // FIX: was `const nowTime = nowTime()` — shadowed function → crash
 
   // Duration per entry:
   //  • checkOut exists → actual duration
@@ -2040,8 +2040,9 @@ app.post('/api/whatsapp/send-custom', async (req, res) => {
   res.json({results, sent, failed});
 });
 
+
 // ════════════════════════════════════════════════════════
-//  إرسال تقرير القرآن عبر واتساب PDF
+//  إرسال تقرير القرآن عبر واتساب
 // ════════════════════════════════════════════════════════
 
 async function _buildQuranPDF(db, studentId) {
@@ -2055,18 +2056,16 @@ async function _buildQuranPDF(db, studentId) {
   const TYPE_AR = { memorization:'حفظ جديد', revision:'مراجعة', recitation:'تلاوة وتجويد' };
 
   return new Promise((resolve, reject) => {
-    const doc  = new PDFDocument({ margin:40, size:'A4' });
+    const doc = new PDFDocument({ margin:40, size:'A4' });
     const bufs = [];
     doc.on('data', d => bufs.push(d));
     doc.on('end',  () => resolve(Buffer.concat(bufs)));
     doc.on('error', reject);
 
-    // Header bar
     doc.rect(0, 0, 612, 66).fill('#1D4ED8');
     doc.fillColor('#fff').fontSize(15).text(school, 40, 14, { align:'center', width:532 });
-    doc.fontSize(10).text(`تقرير تقدم القرآن — ${s.name}${cls ? ' — ' + cls.name : ''}`, 40, 36, { align:'center', width:532 });
+    doc.fontSize(10).text('تقرير تقدم القرآن — ' + s.name + (cls ? ' — ' + cls.name : ''), 40, 36, { align:'center', width:532 });
 
-    // Stats
     const stats = [
       ['إجمالي', rows.length,                                   '#eff6ff','#1e40af'],
       ['حفظ',   rows.filter(r=>r.type==='memorization').length, '#f0fdf4','#166534'],
@@ -2074,20 +2073,19 @@ async function _buildQuranPDF(db, studentId) {
       ['تلاوة',  rows.filter(r=>r.type==='recitation').length,  '#fdf4ff','#7e22ce'],
     ];
     let sx = 40;
-    stats.forEach(([lbl, val, bg, fg]) => {
-      doc.rect(sx, 76, 118, 38).fill(bg);
-      doc.fillColor(fg).fontSize(16).text(String(val), sx,  82, { width:118, align:'center' });
-      doc.fontSize(7.5).text(lbl,                      sx, 101, { width:118, align:'center' });
+    stats.forEach(function(st) {
+      doc.rect(sx, 76, 118, 38).fill(st[2]);
+      doc.fillColor(st[3]).fontSize(16).text(String(st[1]), sx,  82, { width:118, align:'center' });
+      doc.fontSize(7.5).text(st[0],                         sx, 101, { width:118, align:'center' });
       sx += 128;
     });
 
-    // Table header
     const COL = [62, 60, 95, 95, 32, 50, 46, 112];
     const HDR = ['التاريخ','النوع','من','إلى','الجزء','صفحات','تقييم','ملاحظات'];
     let y = 128;
     doc.rect(40, y, 532, 17).fill('#1D4ED8');
     let hx = 40;
-    HDR.forEach((h, i) => {
+    HDR.forEach(function(h, i) {
       doc.fillColor('#fff').fontSize(7.5).text(h, hx+2, y+4, { width:COL[i]-4, align:'center' });
       hx += COL[i];
     });
@@ -2096,26 +2094,26 @@ async function _buildQuranPDF(db, studentId) {
     if (!rows.length) {
       doc.fillColor('#64748b').fontSize(11).text('لا توجد سجلات بعد.', 40, y+20, { align:'center', width:532 });
     } else {
-      rows.slice(0, 36).forEach((p, i) => {
+      rows.slice(0, 36).forEach(function(p, i) {
         if (y > 760) { doc.addPage(); y = 40; }
         doc.rect(40, y, 532, 16).fill(i % 2 === 0 ? '#f8fafc' : '#fff');
-        const from  = [p.surahFromName, p.ayahFrom ? `آية ${p.ayahFrom}` : ''].filter(Boolean).join(' ') || '—';
-        const to    = [p.surahToName,   p.ayahTo   ? `آية ${p.ayahTo}`   : ''].filter(Boolean).join(' ') || '—';
-        const pages = p.pageFrom ? (p.pageTo && p.pageTo !== p.pageFrom ? `${p.pageFrom}-${p.pageTo}` : `${p.pageFrom}`) : '—';
-        [p.date||'—', TYPE_AR[p.type]||p.type||'—', from, to, p.juz||'—', pages, p.grade||'—', p.notes||'—']
-          .forEach((v, ci) => {
-            doc.fillColor('#1e293b').fontSize(7)
-               .text(String(v), 40 + COL.slice(0,ci).reduce((a,b)=>a+b,0) + 2, y + 3,
-                     { width: COL[ci]-4, align:'center', lineBreak:false });
-          });
+        const from  = [p.surahFromName, p.ayahFrom ? 'آية ' + p.ayahFrom : ''].filter(Boolean).join(' ') || '—';
+        const to    = [p.surahToName,   p.ayahTo   ? 'آية ' + p.ayahTo   : ''].filter(Boolean).join(' ') || '—';
+        const pages = p.pageFrom ? (p.pageTo && p.pageTo !== p.pageFrom ? p.pageFrom+'-'+p.pageTo : String(p.pageFrom)) : '—';
+        const cells = [p.date||'—', TYPE_AR[p.type]||p.type||'—', from, to, p.juz||'—', pages, p.grade||'—', p.notes||'—'];
+        let cx = 40;
+        cells.forEach(function(v, ci) {
+          doc.fillColor('#1e293b').fontSize(7)
+             .text(String(v), cx+2, y+3, { width:COL[ci]-4, align:'center', lineBreak:false });
+          cx += COL[ci];
+        });
         y += 16;
       });
     }
 
-    // Footer
     doc.moveTo(40, y+8).lineTo(572, y+8).strokeColor('#e2e8f0').lineWidth(0.5).stroke();
     doc.fillColor('#94a3b8').fontSize(7.5)
-       .text(`${school} — ${new Date().toLocaleDateString('ar-SA')}`, 40, y+12, { align:'center', width:532 });
+       .text(school + ' — ' + new Date().toLocaleDateString('ar-SA'), 40, y+12, { align:'center', width:532 });
     doc.end();
   });
 }
@@ -2126,52 +2124,51 @@ app.post('/api/whatsapp/send-quran-pdf/:studentId', async (req, res) => {
   if (!token) return res.json({ ok:false, error:'Fonnte Token غير مُعيَّن في الإعدادات' });
 
   const s = db.students.find(x => x.id === req.params.studentId);
-  if (!s)            return res.status(404).json({ ok:false, error:'الطالب غير موجود' });
+  if (!s)             return res.status(404).json({ ok:false, error:'الطالب غير موجود' });
   if (!s.parentPhone) return res.json({ ok:false, error:'لا يوجد رقم هاتف لولي الأمر' });
 
   try {
-    // 1. Generate PDF buffer
-    const pdfBuf = await _buildQuranPDF(db, req.params.studentId);
+    const pdfBuf  = await _buildQuranPDF(db, req.params.studentId);
+    const filename = 'quran-' + req.params.studentId + '-' + Date.now() + '.pdf';
 
-    // 2. Upload to Supabase Storage
-    const filename = `quran-${req.params.studentId}-${Date.now()}.pdf`;
     const { error: upErr } = await _supabase.storage
       .from(STORAGE_BUCKET).upload(filename, pdfBuf, { contentType:'application/pdf', upsert:true });
     if (upErr) throw new Error('فشل رفع الملف: ' + upErr.message);
-    const { data: urlData } = _supabase.storage.from(STORAGE_BUCKET).getPublicUrl(filename);
 
-    // 3. Build caption and send via Fonnte
+    const { data: urlData } = _supabase.storage.from(STORAGE_BUCKET).getPublicUrl(filename);
     const cls     = db.classes.find(c => c.id === s.classId);
     const entries = (db.quranProgress || []).filter(p => p.studentId === req.params.studentId);
-    const caption = `السلام عليكم،\n\nإليكم تقرير تقدم القرآن الكريم للطالب *${s.name}*`
-      + (cls ? ` — حلقة ${cls.name}` : '') + `.\n\n`
-      + `إجمالي الجلسات: ${entries.length}\n`
-      + `حفظ جديد: ${entries.filter(e=>e.type==='memorization').length}\n`
-      + `مراجعة: ${entries.filter(e=>e.type==='revision').length}\n\n`
-      + `— ${db.settings.schoolName || 'إدارة الحلقات'}`;
+    const caption = 'السلام عليكم،\n\nإليكم تقرير تقدم القرآن الكريم للطالب *' + s.name + '*'
+      + (cls ? ' — حلقة ' + cls.name : '') + '.\n\n'
+      + 'إجمالي الجلسات: ' + entries.length + '\n'
+      + 'حفظ جديد: ' + entries.filter(e=>e.type==='memorization').length + '\n'
+      + 'مراجعة: '   + entries.filter(e=>e.type==='revision').length + '\n\n'
+      + '— ' + (db.settings.schoolName || 'إدارة الحلقات');
 
-    // Fonnte supports sending a file URL in the same /send payload
     const cleanPhone = String(s.parentPhone).replace(/\D/g, '');
     const payload    = JSON.stringify({ target:cleanPhone, message:caption, url:urlData.publicUrl, delay:'2', countryCode:'966' });
-    const result     = await new Promise(resolve => {
+    const result     = await new Promise(function(resolve) {
       const opts = {
         hostname:'api.fonnte.com', path:'/send', method:'POST',
         headers:{ 'Authorization':token, 'Content-Type':'application/json', 'Content-Length':Buffer.byteLength(payload) }
       };
-      const r = https.request(opts, resp => {
-        let d = ''; resp.on('data', c => d += c);
-        resp.on('end', () => { try { const j=JSON.parse(d); resolve({ok:j.status===true,error:j.reason||''}); } catch(e){ resolve({ok:false,error:'bad response'}); } });
+      const r = https.request(opts, function(resp) {
+        let d = '';
+        resp.on('data', function(c){ d += c; });
+        resp.on('end',  function(){
+          try { const j=JSON.parse(d); resolve({ ok:j.status===true, error:j.reason||j.message||'' }); }
+          catch(e){ resolve({ ok:false, error:'bad response' }); }
+        });
       });
-      r.on('error', e => resolve({ok:false, error:e.message}));
+      r.on('error', function(e){ resolve({ ok:false, error:e.message }); });
       r.write(payload); r.end();
     });
 
-    // 4. Log
-    saveDB(db2 => {
+    saveDB(function(db2) {
       db2.waLog = db2.waLog || [];
       db2.waLog.push({ id:newId(), type:'quran-pdf', date:nowDate(),
         studentId:req.params.studentId, studentName:s.name, phone:s.parentPhone,
-        className:cls?.name||'', classId:s.classId||'',
+        className:cls?cls.name:'', classId:s.classId||'',
         message:caption, status:result.ok?'sent':'failed',
         sentAt:new Date().toISOString(), error:result.error||'' });
     }, 'waLog');
