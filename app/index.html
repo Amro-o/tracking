@@ -848,6 +848,7 @@
           <button class="btn-secondary" onclick="studentBulkSelectAll()">تحديد الكل</button>
           <button class="btn-secondary" onclick="studentBulkClearAll()">إلغاء الكل</button>
           <button class="btn-secondary" id="studentBulkPrintBtn" onclick="studentBulkPrint()" disabled><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-left:4px;"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg> طباعة المحدد</button>
+          <button style="font-size:13px;padding:6px 14px;background:#25D366;color:#fff;border:1px solid #25D366;border-radius:6px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;opacity:1" id="studentBulkWABtn" onclick="studentBulkSendQuranWA()" disabled><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> إرسال تقرير القرآن واتساب</button>
           <button class="btn-danger"    id="studentBulkDeleteBtn" onclick="studentBulkDelete()" disabled><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-left:4px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg> حذف المحدد</button>
         </div>
       </div>
@@ -1239,79 +1240,24 @@
 
       <!-- ▸ النسخ الاحتياطي -->
       <div class="wa-tab-panel hidden" id="syncTab-backup">
-
-        <!-- 1. تصدير JSON -->
         <div class="card form-card">
-          <h3 class="section-title">
-            <span class="ui-ic ic-blue" style="vertical-align:middle;margin-inline-end:6px">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-            </span> تنزيل نسخة احتياطية
-          </h3>
-          <p class="section-desc">تحميل جميع البيانات (الطلاب، المعلمين، الحضور، الإعدادات…) كملف JSON.</p>
-          <div class="btn-row">
+          <h3 class="section-title"><span class="ui-ic ic-blue" style="vertical-align:middle;margin-inline-end:6px"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg></span> تنزيل نسخة احتياطية</h3>
+          <p class="section-desc">ملف JSON كامل — يحتوي على جميع البيانات ويمكن استيراده لاحقاً.</p>
+          <div class="reset-group" style="border:none;padding:0;margin:0">
             <button class="btn-primary" onclick="exportData()">
               <i data-lucide="download" style="width:15px;height:15px;vertical-align:middle;margin-left:6px"></i> تنزيل النسخة الاحتياطية
             </button>
           </div>
-          <p id="backupExportStatus" class="status-msg"></p>
         </div>
-
-        <!-- 2. دمج JSON -->
         <div class="card form-card mt-md">
-          <h3 class="section-title">
-            <span class="ui-ic ic-green" style="vertical-align:middle;margin-inline-end:6px">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            </span> استيراد ودمج (JSON)
-          </h3>
-          <p class="section-desc">يضيف البيانات من الملف دون حذف أي بيانات حالية — مفيد لدمج نسخ مختلفة.</p>
+          <h3 class="section-title"><span class="ui-ic ic-green" style="vertical-align:middle;margin-inline-end:6px"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span> استيراد بيانات</h3>
+          <p class="section-desc">استورد ملف JSON من مشرف آخر. سيتم دمج البيانات دون تكرار.</p>
           <div class="btn-row">
             <button class="btn-primary" onclick="document.getElementById('importFile').click()">
-              <i data-lucide="upload" style="width:15px;height:15px;vertical-align:middle;margin-left:6px"></i> اختيار ملف JSON للدمج
+              <i data-lucide="upload" style="width:15px;height:15px;vertical-align:middle;margin-left:6px"></i> استيراد البيانات
             </button>
           </div>
-          <p id="backupMergeStatus" class="status-msg"></p>
         </div>
-
-        <!-- 3. استعادة كاملة JSON -->
-        <div class="card form-card mt-md">
-          <h3 class="section-title">
-            <span class="ui-ic ic-red" style="vertical-align:middle;margin-inline-end:6px">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-            </span> استعادة كاملة (JSON)
-          </h3>
-          <div class="reset-warning-banner" style="margin-bottom:12px;font-size:12px">
-            ⚠️ تحذير: تحذف جميع البيانات الحالية وتستبدلها بمحتوى الملف — لا يمكن التراجع.
-          </div>
-          <p class="section-desc">استخدم هذا لاستعادة نسخة احتياطية JSON كاملة سابقة.</p>
-          <div class="btn-row">
-            <input type="file" id="backupRestoreFile" accept=".json" style="display:none" onchange="backupRestoreJson(this)" />
-            <button class="btn-danger" onclick="document.getElementById('backupRestoreFile').click()">
-              <i data-lucide="rotate-ccw" style="width:15px;height:15px;vertical-align:middle;margin-left:6px"></i> اختيار ملف JSON للاستعادة
-            </button>
-          </div>
-          <p id="backupRestoreStatus" class="status-msg"></p>
-        </div>
-
-        <!-- 4. استيراد CSV من Supabase -->
-        <div class="card form-card mt-md">
-          <h3 class="section-title">
-            <span class="ui-ic ic-teal" style="vertical-align:middle;margin-inline-end:6px">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/></svg>
-            </span> استيراد من Supabase CSV
-          </h3>
-          <div class="reset-warning-banner" style="margin-bottom:12px;font-size:12px">
-            ⚠️ تحذير: تستبدل جميع البيانات الحالية بمحتوى ملف CSV — لا يمكن التراجع.
-          </div>
-          <p class="section-desc">إذا صدّرت جدول <strong>store</strong> من Supabase مباشرةً كـ CSV، استخدم هذا الخيار لاستعادته.<br><span style="font-size:11px;color:var(--text2)">المسار في Supabase: Table Editor ← store ← Export ← CSV</span></p>
-          <div class="btn-row">
-            <input type="file" id="backupCsvFile" accept=".csv" style="display:none" onchange="backupRestoreCsv(this)" />
-            <button class="btn-danger" onclick="document.getElementById('backupCsvFile').click()">
-              <i data-lucide="table" style="width:15px;height:15px;vertical-align:middle;margin-left:6px"></i> اختيار ملف CSV من Supabase
-            </button>
-          </div>
-          <p id="backupCsvStatus" class="status-msg"></p>
-        </div>
-
       </div><!-- /syncTab-backup -->
 
       <!-- ▸ Telegram -->
@@ -3012,62 +2958,6 @@ document.addEventListener('DOMContentLoaded', function() { initThemeUI(); initIc
     </div>
   </div>
 </div>
-
-<script>
-// ── Backup & Restore functions ──────────────────────────
-function _backupSetStatus(id, type, msg) {
-  const el = document.getElementById(id);
-  if (!el) return;
-  el.textContent = msg;
-  el.style.color = type === 'success' ? 'var(--success)' : type === 'error' ? 'var(--error)' : 'var(--text2)';
-}
-
-async function backupRestoreJson(input) {
-  const file = input.files[0];
-  if (!file) return;
-  if (!confirm('⚠️ ستُحذف جميع البيانات الحالية وتُستبدل بمحتوى الملف.\n\nهل أنت متأكد؟')) {
-    input.value = ''; return;
-  }
-  _backupSetStatus('backupRestoreStatus', 'info', '⏳ جارٍ الاستعادة…');
-  try {
-    const form = new FormData();
-    form.append('file', file);
-    const res  = await fetch('/api/backup/restore', { method: 'POST', body: form });
-    const data = await res.json();
-    if (data.ok) {
-      _backupSetStatus('backupRestoreStatus', 'success', '✅ تمت الاستعادة الكاملة بنجاح — أعد تحميل الصفحة');
-    } else {
-      _backupSetStatus('backupRestoreStatus', 'error', '❌ ' + (data.error || 'فشلت الاستعادة'));
-    }
-  } catch(e) {
-    _backupSetStatus('backupRestoreStatus', 'error', '❌ خطأ: ' + e.message);
-  }
-  input.value = '';
-}
-
-async function backupRestoreCsv(input) {
-  const file = input.files[0];
-  if (!file) return;
-  if (!confirm('⚠️ ستُحذف جميع البيانات الحالية وتُستبدل بمحتوى ملف CSV.\n\nهل أنت متأكد؟')) {
-    input.value = ''; return;
-  }
-  _backupSetStatus('backupCsvStatus', 'info', '⏳ جارٍ الاستيراد…');
-  try {
-    const form = new FormData();
-    form.append('file', file);
-    const res  = await fetch('/api/backup/restore-csv', { method: 'POST', body: form });
-    const data = await res.json();
-    if (data.ok) {
-      _backupSetStatus('backupCsvStatus', 'success', `✅ تمت الاستعادة بنجاح — تم استيراد ${data.keys} مفتاح. أعد تحميل الصفحة`);
-    } else {
-      _backupSetStatus('backupCsvStatus', 'error', '❌ ' + (data.error || 'فشل الاستيراد'));
-    }
-  } catch(e) {
-    _backupSetStatus('backupCsvStatus', 'error', '❌ خطأ: ' + e.message);
-  }
-  input.value = '';
-}
-</script>
 
 </body>
 </html>
