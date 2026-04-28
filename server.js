@@ -18,6 +18,7 @@ const os         = require('os');
 
 const { createClient } = require('@supabase/supabase-js');
 let compression; try { compression = require('compression'); } catch(e) { compression = null; }
+let sharp;       try { sharp       = require('sharp');       } catch(e) { sharp = null; }
 
 // اختياري: مكتبة QR
 let QRCode;
@@ -734,11 +735,29 @@ const upload = multer({
 // أنشئ الحاوية مرة واحدة: Supabase → Storage → New bucket → uploads → Public
 const STORAGE_BUCKET = process.env.SUPABASE_BUCKET || 'uploads';
 async function uploadToSupabase(buffer, mimetype, originalName) {
-  const ext      = (originalName.split('.').pop() || 'bin').replace(/[^\w]/g, '');
-  const filename = `${newId()}.${ext}`;
+  let finalBuffer = buffer;
+  let finalMime   = mimetype;
+  let finalExt    = (originalName.split('.').pop() || 'bin').replace(/[^\w]/g, '');
+
+  // PERF: resize + compress images to WebP before storing
+  // Shrinks a typical phone photo from 3-8 MB down to ~50-100 KB
+  if (sharp && mimetype.startsWith('image/')) {
+    try {
+      finalBuffer = await sharp(buffer)
+        .resize(800, 800, { fit: 'inside', withoutEnlargement: true })
+        .webp({ quality: 82 })
+        .toBuffer();
+      finalMime = 'image/webp';
+      finalExt  = 'webp';
+    } catch(e) {
+      console.warn('[upload] sharp compression failed, using original:', e.message);
+    }
+  }
+
+  const filename = `${newId()}.${finalExt}`;
   const { error } = await _supabase.storage
     .from(STORAGE_BUCKET)
-    .upload(filename, buffer, { contentType: mimetype, upsert: false });
+    .upload(filename, finalBuffer, { contentType: finalMime, upsert: false });
   if (error) throw new Error('Supabase Storage error: ' + error.message);
   const { data } = _supabase.storage.from(STORAGE_BUCKET).getPublicUrl(filename);
   return data.publicUrl;
