@@ -731,7 +731,7 @@ async function viewStudent(id) {
         <button class="btn-secondary" style="font-size:12px;padding:5px 10px" onclick="window.open('${API}/reports/attendance/student/${s.id}','_blank')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-left:3px;flex-shrink:0"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg> حضور Excel</button>
         <button class="btn-secondary" style="font-size:12px;padding:5px 10px" onclick="window.open('${API}/reports/quran/student/${s.id}','_blank')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-left:3px;flex-shrink:0"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg> قرآن Excel</button>
         <button class="btn-secondary" style="font-size:12px;padding:5px 10px" onclick="window.open('${API}/print/quran/student/${s.id}','_blank')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-left:3px;flex-shrink:0"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg> طباعة</button>
-        <button id="sendQuranWABtn_${s.id}" onclick="sendQuranReportWA('${s.id}')" style="font-size:12px;padding:5px 10px;background:#22c55e;color:#fff;border:1px solid #16a34a;border-radius:6px;cursor:pointer;display:inline-flex;align-items:center;gap:4px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> إرسال لولي الأمر واتساب</button>
+        <button id="sendQuranWABtn_${s.id}" onclick="sendQuranReportWA('${s.id}')" style="font-size:12px;padding:5px 10px;background:#22c55e;color:#fff;border:1px solid #16a34a;border-radius:6px;cursor:pointer;display:inline-flex;align-items:center;gap:4px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> إرسال تقرير القرآن واتساب</button>
         <button class="btn-secondary" style="font-size:12px;padding:5px 10px" onclick="closeModal('studentDetailModal');openProgressModal('${s.id}')">+ تسجيل تقدم</button>
       </div>
     </div>
@@ -1152,6 +1152,7 @@ function studentToggleBulkMode() {
   if (btn) btn.innerHTML   = _studentBulkMode ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> إلغاء التحديد' : '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg> تحديد';
   bar?.classList.toggle('hidden', !_studentBulkMode);
   renderStudentList();
+  _studentBulkUpdateCount();
 }
 
 function studentBulkToggle(id) {
@@ -1174,14 +1175,14 @@ function studentBulkSelectAll() {
   if (search)  students = students.filter(s => s.name.toLowerCase().includes(search) || (s.studentId||'').toLowerCase().includes(search));
   if (classId) students = students.filter(s => s.classId === classId);
   students.forEach(s => _studentBulkSelected.add(s.id));
-  _studentBulkUpdateCount();
   renderStudentList();
+  _studentBulkUpdateCount();
 }
 
 function studentBulkClearAll() {
   _studentBulkSelected.clear();
-  _studentBulkUpdateCount();
   renderStudentList();
+  _studentBulkUpdateCount();
 }
 
 function _studentBulkUpdateCount() {
