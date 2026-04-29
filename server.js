@@ -2165,15 +2165,16 @@ td{padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:right;vertical-al
 </body></html>`;
 }
 
-// Convert HTML to PDF using Puppeteer (proper Arabic rendering)
+// Convert HTML to PDF using puppeteer-core + @sparticuz/chromium (Render-compatible)
 async function _htmlToPDF(html) {
-  let puppeteer;
-  try { puppeteer = require('puppeteer'); }
-  catch(e) { throw new Error('puppeteer غير مثبت — شغّل: npm install puppeteer'); }
+  const puppeteer  = require('puppeteer-core');
+  const chromium   = require('@sparticuz/chromium');
 
   const browser = await puppeteer.launch({
-    headless: 'new',
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+    args:            chromium.args,
+    defaultViewport: chromium.defaultViewport,
+    executablePath:  await chromium.executablePath(),
+    headless:        chromium.headless,
   });
   try {
     const page = await browser.newPage();
