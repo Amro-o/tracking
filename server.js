@@ -2455,12 +2455,11 @@ app.post('/api/whatsapp/send-quran-pdf/:studentId', async (req, res) => {
       });
     }
 
-    // Single request — url-encoded body handles both url and multiline message cleanly
+    // Send PDF as a clickable link in the message (free plan compatible)
+    const messageWithLink = caption + `\n\n📄 تقرير القرآن الكريم:\n${fileUrl}`;
     const fileResult = await fonntePost({
       target:      cleanPhone,
-      message:     caption,
-      url:         fileUrl,
-      filename:    `quran-report-${s.name}.pdf`,
+      message:     messageWithLink,
       countryCode: '966',
       delay:       '2'
     });
