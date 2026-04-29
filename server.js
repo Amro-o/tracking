@@ -2044,7 +2044,148 @@ app.post('/api/whatsapp/send-custom', async (req, res) => {
 //  إرسال تقرير القرآن عبر واتساب PDF
 // ════════════════════════════════════════════════════════
 
-async function _buildQuranPDF(db, studentId) {
+// Shared: build the quran report HTML (used by both print endpoint and PDF generator)
+function _buildQuranReportHTML(db, studentId) {
+  const s      = db.students.find(x => x.id === studentId);
+  if (!s) throw new Error('الطالب غير موجود');
+  const cls    = db.classes.find(c => c.id === s.classId);
+  const school = db.settings.schoolName || 'حضور الحلقات';
+  const entries = (db.quranProgress || [])
+    .filter(p => p.studentId === studentId)
+    .sort((a,b) => b.date.localeCompare(a.date));
+
+  const TYPE_AR = { memorization:'حفظ جديد', revision:'مراجعة', recitation:'تلاوة وتجويد' };
+  const TYPE_CLR = { memorization:'#1e40af', revision:'#92400e', recitation:'#7e22ce' };
+  const TYPE_BG  = { memorization:'#eff6ff', revision:'#fffbeb', recitation:'#faf5ff' };
+  const GRADE_STYLE = {
+    'ممتاز':    'background:#dcfce7;color:#166534',
+    'جيد جداً': 'background:#dbeafe;color:#1e40af',
+    'جيد':      'background:#fef3c7;color:#92400e',
+    'مقبول':    'background:#f3f4f6;color:#374151',
+    'ضعيف':     'background:#fee2e2;color:#991b1b',
+  };
+
+  const cnt = { memorization:0, revision:0, recitation:0 };
+  const allGraded = entries.filter(e => e.grade);
+  const avgGrade  = allGraded.length
+    ? (allGraded.reduce((s,e)=>s+Number(e.grade)||0,0)/allGraded.length).toFixed(1)
+    : null;
+  const repeatCnt = entries.filter(e => e.isRepeat==='1'||e.isRepeat===true).length;
+
+  const latestMem = entries.find(e => e.type==='memorization');
+  const latestPos = latestMem
+    ? (latestMem.surahToName||latestMem.surahFromName||'—') + (latestMem.ayahTo?` (آية ${latestMem.ayahTo})`:'')
+    : '—';
+
+  const rows = entries.map((p, i) => {
+    if (cnt[p.type] !== undefined) cnt[p.type]++;
+    const from  = [p.surahFromName, p.ayahFrom?`آية ${p.ayahFrom}`:''].filter(Boolean).join(' ') || '—';
+    const to    = [p.surahToName,   p.ayahTo  ?`آية ${p.ayahTo}`  :''].filter(Boolean).join(' ') || '—';
+    const pages = p.pageFrom ? (p.pageTo&&p.pageTo!==p.pageFrom?`${p.pageFrom}–${p.pageTo}`:`${p.pageFrom}`) : '—';
+    const gradeStyle = p.grade ? (GRADE_STYLE[p.grade]||'') : '';
+    const typeBg  = TYPE_BG[p.type]  || '#f8fafc';
+    const typeFg  = TYPE_CLR[p.type] || '#374151';
+    const typeStr = TYPE_AR[p.type]  || p.type || '—';
+    const bg = i%2===0 ? '#f8fafc' : '#ffffff';
+    const repeatDot = (p.isRepeat==='1'||p.isRepeat===true) ? '<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#f97316;margin-left:4px;vertical-align:middle" title="تكرار"></span>' : '';
+    return `<tr style="background:${bg}">
+      <td style="font-size:11px;direction:rtl">${formatHijri(p.date)}</td>
+      <td><span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:${typeBg};color:${typeFg}">${typeStr}</span></td>
+      <td>${from}</td><td>${to}</td>
+      <td style="text-align:center">${p.juz?`جزء ${p.juz}`:'—'}</td>
+      <td style="text-align:center">${pages}</td>
+      <td style="text-align:center">${p.grade?`<span class="badge" style="${gradeStyle}">${p.grade}</span>`:'—'}</td>
+      <td style="color:#64748b;font-size:11px">${repeatDot}${p.notes||'—'}</td>
+    </tr>`;
+  }).join('');
+
+  const now = new Date().toLocaleDateString('ar-SA', { calendar:'islamic', year:'numeric', month:'long', day:'numeric' });
+
+  return `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="UTF-8">
+<title>تقدم القرآن — ${s.name}</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;font-family:Arial,Tahoma,'Segoe UI',sans-serif}
+body{background:#fff;color:#111;padding:16px 20px;max-width:960px;margin:auto}
+.ph{background:#1e3a8a;color:#fff;border-radius:10px;padding:14px 20px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center}
+.ph-school{font-size:17px;font-weight:800}.ph-sub{font-size:12px;color:#bfdbfe;margin-top:3px}
+.ph-date{font-size:11px;color:#93c5fd;text-align:left;white-space:nowrap;margin-right:auto;padding-right:16px}
+.stats{display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap}
+.stat{padding:10px 16px;border-radius:8px;text-align:center;min-width:90px;border:1px solid rgba(0,0,0,.06)}
+.stat .n{font-size:22px;font-weight:800}.stat .l{font-size:10px;margin-top:2px;font-weight:600}
+.stat .s{font-size:10px;color:#64748b;margin-top:1px}
+.infobar{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 14px;margin-bottom:14px;font-size:12px;color:#374151;display:flex;gap:20px;flex-wrap:wrap}
+.infobar strong{color:#1e3a8a}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{background:#1e3a8a;color:#fff;padding:8px 10px;text-align:right;font-weight:700;font-size:11px}
+td{padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:right;vertical-align:middle}
+.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700}
+.footer{font-size:10px;color:#94a3b8;text-align:center;margin-top:14px;border-top:1px solid #e2e8f0;padding-top:8px}
+@page{size:A4 landscape;margin:10mm}
+</style></head><body>
+<div class="ph">
+  <div>
+    <div class="ph-school">${school}</div>
+    <div class="ph-sub">تقرير تقدم القرآن الكريم — ${s.name}${cls?' — '+cls.name:''}</div>
+  </div>
+  <div class="ph-date">${now}</div>
+</div>
+<div class="stats">
+  <div class="stat" style="background:#f0f9ff;border-color:#0ea5e9">
+    <div class="n" style="color:#0c4a6e">${entries.length}</div>
+    <div class="l" style="color:#0369a1">إجمالي الجلسات</div>
+    ${avgGrade?`<div class="s">متوسط ${avgGrade}/10</div>`:''}
+  </div>
+  <div class="stat" style="background:#f0fdf4;border-color:#22c55e">
+    <div class="n" style="color:#14532d">${cnt.memorization}</div>
+    <div class="l" style="color:#166534">حفظ جديد</div>
+    ${entries.filter(e=>e.type==='memorization'&&e.grade).length?`<div class="s">متوسط ${(entries.filter(e=>e.type==='memorization'&&e.grade).reduce((s,e)=>s+Number(e.grade),0)/entries.filter(e=>e.type==='memorization'&&e.grade).length).toFixed(1)}/10</div>`:''}
+  </div>
+  <div class="stat" style="background:#fefce8;border-color:#eab308">
+    <div class="n" style="color:#713f12">${cnt.revision}</div>
+    <div class="l" style="color:#854d0e">مراجعة</div>
+    ${entries.filter(e=>e.type==='revision'&&e.grade).length?`<div class="s">متوسط ${(entries.filter(e=>e.type==='revision'&&e.grade).reduce((s,e)=>s+Number(e.grade),0)/entries.filter(e=>e.type==='revision'&&e.grade).length).toFixed(1)}/10</div>`:''}
+  </div>
+  <div class="stat" style="background:#faf5ff;border-color:#a855f7">
+    <div class="n" style="color:#4a1772">${cnt.recitation}</div>
+    <div class="l" style="color:#7e22ce">تلاوة وتجويد</div>
+    ${entries.filter(e=>e.type==='recitation'&&e.grade).length?`<div class="s">متوسط ${(entries.filter(e=>e.type==='recitation'&&e.grade).reduce((s,e)=>s+Number(e.grade),0)/entries.filter(e=>e.type==='recitation'&&e.grade).length).toFixed(1)}/10</div>`:''}
+  </div>
+  ${repeatCnt?`<div class="stat" style="background:#fff7ed;border-color:#f97316"><div class="n" style="color:#9a3412">${repeatCnt}</div><div class="l" style="color:#c2410c">جلسات تكرار</div></div>`:''}
+</div>
+<div class="infobar">
+  <span>آخر موقع حفظ: <strong>${latestPos}</strong></span>
+  <span>جلسات بتقييم: <strong>${allGraded.length} / ${entries.length}</strong></span>
+  <span>ولي الأمر: <strong>${s.parentPhone||'—'}</strong></span>
+</div>
+<table>
+  <thead><tr><th>التاريخ</th><th>النوع</th><th>من</th><th>إلى</th><th>الجزء</th><th>الصفحات</th><th>التقييم</th><th>ملاحظات</th></tr></thead>
+  <tbody>${rows||'<tr><td colspan="8" style="text-align:center;padding:20px;color:#888">لا توجد سجلات بعد</td></tr>'}</tbody>
+</table>
+<div class="footer">${school} — تاريخ الإصدار: ${now}</div>
+</body></html>`;
+}
+
+// Convert HTML to PDF using Puppeteer (proper Arabic rendering)
+async function _htmlToPDF(html) {
+  let puppeteer;
+  try { puppeteer = require('puppeteer'); }
+  catch(e) { throw new Error('puppeteer غير مثبت — شغّل: npm install puppeteer'); }
+
+  const browser = await puppeteer.launch({
+    headless: 'new',
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+  });
+  try {
+    const page = await browser.newPage();
+    await page.setContent(html, { waitUntil: 'networkidle0' });
+    const pdf = await page.pdf({ format: 'A4', landscape: true, printBackground: true, margin: { top:'10mm', bottom:'10mm', left:'10mm', right:'10mm' } });
+    return pdf;
+  } finally {
+    await browser.close();
+  }
+}
+
+
   const s      = db.students.find(x => x.id === studentId);
   if (!s) throw new Error('الطالب غير موجود');
   const cls    = db.classes.find(c => c.id === s.classId);
@@ -2259,15 +2400,20 @@ app.post('/api/whatsapp/send-quran-pdf/:studentId', async (req, res) => {
   if (!s.parentPhone) return res.json({ ok:false, error:'لا يوجد رقم هاتف لولي الأمر' });
 
   try {
-    // 1. Generate PDF buffer
-    const pdfBuf = await _buildQuranPDF(db, req.params.studentId);
+    // 1. Generate PDF from HTML (proper Arabic rendering via Puppeteer)
+    const html   = _buildQuranReportHTML(db, req.params.studentId);
+    const pdfBuf = await _htmlToPDF(html);
 
     // 2. Upload to Supabase Storage
     const filename = `quran-${req.params.studentId}-${Date.now()}.pdf`;
     const { error: upErr } = await _supabase.storage
       .from(STORAGE_BUCKET).upload(filename, pdfBuf, { contentType:'application/pdf', upsert:true });
     if (upErr) throw new Error('فشل رفع الملف: ' + upErr.message);
-    const { data: urlData } = _supabase.storage.from(STORAGE_BUCKET).getPublicUrl(filename);
+    // Use a signed URL (1 hour) so Fonnte can fetch the file even from a private bucket
+    const { data: signedData, error: signErr } = await _supabase.storage
+      .from(STORAGE_BUCKET).createSignedUrl(filename, 3600);
+    if (signErr) throw new Error('فشل إنشاء رابط الملف: ' + signErr.message);
+    const fileUrl = signedData.signedUrl;
 
     // 3. Build caption and send via Fonnte
     const cls     = db.classes.find(c => c.id === s.classId);
@@ -2285,7 +2431,7 @@ app.post('/api/whatsapp/send-quran-pdf/:studentId', async (req, res) => {
     const fields     = {
       target:      cleanPhone,
       message:     caption,
-      url:         urlData.publicUrl,
+      url:         fileUrl,
       filename:    `quran-report-${s.name}.pdf`,   // required for Fonnte to treat it as a named document
       delay:       '2',
       countryCode: '966'
@@ -3059,81 +3205,14 @@ app.get('/api/reports/pdf/teacher-monthly/hijri/:year/:month', (req, res) => {
 // ════════════════════════════════════════════════════════
 
 app.get('/api/print/quran/student/:studentId', (req, res) => {
-  const { studentId } = req.params;
-  const db     = readDB();
-  const s      = db.students.find(x => x.id === studentId);
-  if (!s) return res.status(404).send('الطالب غير موجود');
-  const cls    = db.classes.find(c => c.id === s.classId);
-  const school = db.settings.schoolName || 'حضور الحلقات';
-  const entries = (db.quranProgress || [])
-    .filter(p => p.studentId === studentId)
-    .sort((a,b) => b.date.localeCompare(a.date));
-
-  const TYPE_AR = { memorization:'حفظ جديد', revision:'مراجعة', recitation:'تلاوة وتجويد' };
-  const GRADE_STYLE = {
-    'ممتاز':  'background:#dcfce7;color:#166534',
-    'جيد جداً':'background:#dbeafe;color:#1e40af',
-    'جيد':    'background:#fef3c7;color:#92400e',
-    'مقبول':  'background:#f3f4f6;color:#374151',
-    'ضعيف':   'background:#fee2e2;color:#991b1b',
-  };
-  const cnt = { memorization:0, revision:0, recitation:0 };
-  const rows = entries.map((p, i) => {
-    if (cnt[p.type] !== undefined) cnt[p.type]++;
-    const from = [p.surahFromName, p.ayahFrom ? `آية ${p.ayahFrom}` : ''].filter(Boolean).join(' ') || '—';
-    const to   = [p.surahToName,   p.ayahTo   ? `آية ${p.ayahTo}`   : ''].filter(Boolean).join(' ') || '—';
-    const pages = p.pageFrom ? (p.pageTo && p.pageTo!==p.pageFrom ? `${p.pageFrom}–${p.pageTo}` : `${p.pageFrom}`) : '—';
-    const gradeStyle = p.grade ? (GRADE_STYLE[p.grade] || '') : '';
-    const bg = i%2===0 ? '#f8fafc' : '#fff';
-    return `<tr style="background:${bg}">
-      <td>${formatHijri(p.date)}</td>
-      <td>${TYPE_AR[p.type]||p.type}</td>
-      <td>${from}</td><td>${to}</td>
-      <td style="text-align:center">${p.juz||'—'}</td>
-      <td style="text-align:center">${pages}</td>
-      <td style="text-align:center"><span class="badge" style="${gradeStyle}">${p.grade||'—'}</span></td>
-      <td>${p.notes||'—'}</td>
-    </tr>`;
-  }).join('');
-
-  const hijriNow = new Date().toLocaleDateString('ar-SA',{calendar:'islamic',year:'numeric',month:'long',day:'numeric'});
-  const html = `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="UTF-8">
-<title>تقدم القرآن — ${s.name}</title>
-<style>
-*{box-sizing:border-box;margin:0;padding:0;font-family:Arial,sans-serif}
-body{background:#fff;color:#111;padding:16px 20px;max-width:960px;margin:auto}
-.ph{border-bottom:3px solid #1D4ED8;padding-bottom:10px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:flex-end}
-.ph-school{font-size:18px;font-weight:800;color:#1D4ED8}.ph-sub{font-size:13px;color:#374151;margin-top:3px}.ph-date{font-size:11px;color:#94a3b8;text-align:left}
-.stats{display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap}
-.stat{padding:8px 16px;border-radius:8px;text-align:center;min-width:80px}
-.stat .n{font-size:20px;font-weight:800}.stat .l{font-size:10px;margin-top:2px}
-table{width:100%;border-collapse:collapse;font-size:12px}
-th{background:#1D4ED8;color:#fff;padding:7px 8px;text-align:right;font-weight:700}
-td{padding:6px 8px;border-bottom:1px solid #e2e8f0;text-align:right;vertical-align:middle}
-.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700}
-.footer{font-size:10px;color:#94a3b8;text-align:center;margin-top:14px;border-top:1px solid #e2e8f0;padding-top:8px}
-@page{size:A4 landscape;margin:10mm}@media print{body{padding:0}.no-print{display:none}}
-</style></head><body>
-<div class="ph">
-  <div><div class="ph-school">${school}</div>
-  <div class="ph-sub">تقرير تقدم القرآن الكريم — ${s.name}${cls?' — '+cls.name:''}</div></div>
-  <div class="ph-date">${hijriNow}</div>
-</div>
-<div class="stats">
-  <div class="stat" style="background:#dcfce7;color:#166534"><div class="n">${entries.length}</div><div class="l">إجمالي الجلسات</div></div>
-  <div class="stat" style="background:#f0fdf4;color:#166534"><div class="n">${cnt.memorization}</div><div class="l">حفظ جديد</div></div>
-  <div class="stat" style="background:#eff6ff;color:#1e40af"><div class="n">${cnt.revision}</div><div class="l">مراجعة</div></div>
-  <div class="stat" style="background:#fffbeb;color:#92400e"><div class="n">${cnt.recitation}</div><div class="l">تلاوة وتجويد</div></div>
-</div>
-<button class="no-print" onclick="window.print()" style="margin-bottom:12px;padding:7px 18px;background:#1D4ED8;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px">🖨 طباعة</button>
-<table>
-  <thead><tr><th>التاريخ</th><th>النوع</th><th>من</th><th>إلى</th><th>الجزء</th><th>الصفحات</th><th>التقييم</th><th>ملاحظات</th></tr></thead>
-  <tbody>${rows || '<tr><td colspan="8" style="text-align:center;padding:20px;color:#888">لا توجد سجلات بعد</td></tr>'}</tbody>
-</table>
-<div class="footer">تاريخ الطباعة: ${hijriNow} — ${school}</div>
-</body></html>`;
-  res.setHeader('Content-Type','text/html;charset=utf-8');
-  res.send(html);
+  const db = readDB();
+  try {
+    const html = _buildQuranReportHTML(db, req.params.studentId);
+    res.setHeader('Content-Type','text/html;charset=utf-8');
+    res.send(html);
+  } catch(e) {
+    res.status(404).send(e.message);
+  }
 });
 
 app.get('/api/print/quran/class/:classId', (req, res) => {
