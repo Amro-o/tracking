@@ -2426,42 +2426,60 @@ app.post('/api/whatsapp/send-quran-pdf/:studentId', async (req, res) => {
       + `مراجعة: ${entries.filter(e=>e.type==='revision').length}\n\n`
       + `— ${db.settings.schoolName || 'إدارة الحلقات'}`;
 
-    // Fonnte requires multipart/form-data (NOT JSON) when sending a file URL
+    // Fonnte multipart helper — sends one request, returns {ok, error}
+    // NOTE: caption newlines (\n) break Fonnte's multipart parser when mixed with url,
+    // so we send two separate requests: file first, then the text caption.
     const cleanPhone = String(s.parentPhone).replace(/\D/g, '');
-    const boundary   = '----FonnteBoundary' + Math.random().toString(36).slice(2);
-    const fields     = {
+
+    function fonnteMultipart(fields) {
+      return new Promise(resolve => {
+        const boundary = '----FonnteBoundary' + Math.random().toString(36).slice(2);
+        const parts    = Object.entries(fields).map(([k, v]) =>
+          `--${boundary}\r\nContent-Disposition: form-data; name="${k}"\r\n\r\n${v}`
+        );
+        const body = parts.join('\r\n') + '\r\n--' + boundary + '--';
+        const bodyBuf = Buffer.from(body, 'utf8');
+        const opts = {
+          hostname: 'api.fonnte.com', path: '/send', method: 'POST',
+          headers: {
+            'Authorization': token,
+            'Content-Type':  `multipart/form-data; boundary=${boundary}`,
+            'Content-Length': bodyBuf.length
+          }
+        };
+        const r = https.request(opts, resp => {
+          let d = ''; resp.on('data', c => d += c);
+          resp.on('end', () => {
+            console.log('[send-quran-pdf] Fonnte raw:', d.slice(0, 300));
+            try { const j = JSON.parse(d); resolve({ ok: !!j.status, error: j.reason || j.message || '' }); }
+            catch(e) { resolve({ ok: false, error: 'bad response: ' + d.slice(0, 100) }); }
+          });
+        });
+        r.on('error', e => resolve({ ok: false, error: e.message }));
+        r.write(bodyBuf); r.end();
+      });
+    }
+
+    // Request 1 — send the PDF file (no caption to avoid multipart parsing issues)
+    const fileResult = await fonnteMultipart({
+      target:      cleanPhone,
+      url:         fileUrl,
+      filename:    `quran-report-${s.name}.pdf`,
+      countryCode: '966',
+      delay:       '2'
+    });
+    console.log('[send-quran-pdf] file result:', JSON.stringify(fileResult));
+
+    // Request 2 — send the caption as a plain text message (2s after the file)
+    const textResult = await fonnteMultipart({
       target:      cleanPhone,
       message:     caption,
-      url:         fileUrl,
-      filename:    `quran-report-${s.name}.pdf`,   // required for Fonnte to treat it as a named document
-      delay:       '2',
-      countryCode: '966'
-    };
-    const bodyParts  = Object.entries(fields).map(([k, v]) =>
-      `--${boundary}\r\nContent-Disposition: form-data; name="${k}"\r\n\r\n${v}`
-    );
-    const multipartBody = bodyParts.join('\r\n') + '\r\n--' + boundary + '--';
-
-    const result = await new Promise(resolve => {
-      const opts = {
-        hostname: 'api.fonnte.com', path: '/send', method: 'POST',
-        headers: {
-          'Authorization':  token,
-          'Content-Type':   `multipart/form-data; boundary=${boundary}`,
-          'Content-Length': Buffer.byteLength(multipartBody)
-        }
-      };
-      const r = https.request(opts, resp => {
-        let d = ''; resp.on('data', c => d += c);
-        resp.on('end', () => {
-          console.log('[send-quran-pdf] Fonnte raw:', d.slice(0,300));
-          try { const j=JSON.parse(d); resolve({ ok: j.status===true, error: j.reason||j.message||'' }); }
-          catch(e) { resolve({ ok:false, error:'bad response: '+d.slice(0,100) }); }
-        });
-      });
-      r.on('error', e => resolve({ ok:false, error: e.message }));
-      r.write(multipartBody); r.end();
+      countryCode: '966',
+      delay:       '4'
     });
+    console.log('[send-quran-pdf] text result:', JSON.stringify(textResult));
+
+    const result = { ok: fileResult.ok, error: fileResult.error || textResult.error || '' };
 
     // 4. Log
     saveDB(db2 => {
