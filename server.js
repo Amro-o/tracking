@@ -2412,11 +2412,9 @@ app.post('/api/whatsapp/send-quran-pdf/:studentId', async (req, res) => {
     const { error: upErr } = await _supabase.storage
       .from(STORAGE_BUCKET).upload(filename, pdfBuf, { contentType:'application/pdf', upsert:true });
     if (upErr) throw new Error('فشل رفع الملف: ' + upErr.message);
-    // Use a signed URL (1 hour) so Fonnte can fetch the file even from a private bucket
-    const { data: signedData, error: signErr } = await _supabase.storage
-      .from(STORAGE_BUCKET).createSignedUrl(filename, 3600);
-    if (signErr) throw new Error('فشل إنشاء رابط الملف: ' + signErr.message);
-    const fileUrl = signedData.signedUrl;
+    // Use permanent public URL — Fonnte cannot handle Supabase signed URLs (complex query params)
+    const { data: urlData } = _supabase.storage.from(STORAGE_BUCKET).getPublicUrl(filename);
+    const fileUrl = urlData.publicUrl;
 
     // 3. Build caption and send via Fonnte
     const cls     = db.classes.find(c => c.id === s.classId);
