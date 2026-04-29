@@ -2282,7 +2282,14 @@ app.post('/api/whatsapp/send-quran-pdf/:studentId', async (req, res) => {
     // Fonnte requires multipart/form-data (NOT JSON) when sending a file URL
     const cleanPhone = String(s.parentPhone).replace(/\D/g, '');
     const boundary   = '----FonnteBoundary' + Math.random().toString(36).slice(2);
-    const fields     = { target: cleanPhone, message: caption, url: urlData.publicUrl, delay: '2', countryCode: '966' };
+    const fields     = {
+      target:      cleanPhone,
+      message:     caption,
+      url:         urlData.publicUrl,
+      filename:    `quran-report-${s.name}.pdf`,   // required for Fonnte to treat it as a named document
+      delay:       '2',
+      countryCode: '966'
+    };
     const bodyParts  = Object.entries(fields).map(([k, v]) =>
       `--${boundary}\r\nContent-Disposition: form-data; name="${k}"\r\n\r\n${v}`
     );
