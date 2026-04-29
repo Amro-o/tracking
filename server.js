@@ -2046,17 +2046,17 @@ app.post('/api/whatsapp/send-custom', async (req, res) => {
 
 // Shared: build the quran report HTML (used by both print endpoint and PDF generator)
 function _buildQuranReportHTML(db, studentId) {
-  const s      = db.students.find(x => x.id === studentId);
+  const s       = db.students.find(x => x.id === studentId);
   if (!s) throw new Error('الطالب غير موجود');
-  const cls    = db.classes.find(c => c.id === s.classId);
-  const school = db.settings.schoolName || 'حضور الحلقات';
+  const cls     = db.classes.find(c => c.id === s.classId);
+  const school  = db.settings.schoolName || 'حضور الحلقات';
   const entries = (db.quranProgress || [])
     .filter(p => p.studentId === studentId)
     .sort((a,b) => b.date.localeCompare(a.date));
 
-  const TYPE_AR = { memorization:'حفظ جديد', revision:'مراجعة', recitation:'تلاوة وتجويد' };
-  const TYPE_CLR = { memorization:'#1e40af', revision:'#92400e', recitation:'#7e22ce' };
-  const TYPE_BG  = { memorization:'#eff6ff', revision:'#fffbeb', recitation:'#faf5ff' };
+  const TYPE_AR  = { memorization:'حفظ جديد', revision:'مراجعة', recitation:'تلاوة وتجويد' };
+  const TYPE_CLR = { memorization:'#1e40af',  revision:'#92400e', recitation:'#7e22ce' };
+  const TYPE_BG  = { memorization:'#eff6ff',  revision:'#fffbeb', recitation:'#faf5ff' };
   const GRADE_STYLE = {
     'ممتاز':    'background:#dcfce7;color:#166534',
     'جيد جداً': 'background:#dbeafe;color:#1e40af',
@@ -2068,99 +2068,107 @@ function _buildQuranReportHTML(db, studentId) {
   const cnt = { memorization:0, revision:0, recitation:0 };
   const allGraded = entries.filter(e => e.grade);
   const avgGrade  = allGraded.length
-    ? (allGraded.reduce((s,e)=>s+Number(e.grade)||0,0)/allGraded.length).toFixed(1)
-    : null;
+    ? (allGraded.reduce((s,e)=>s+Number(e.grade)||0,0)/allGraded.length).toFixed(1) : null;
   const repeatCnt = entries.filter(e => e.isRepeat==='1'||e.isRepeat===true).length;
-
   const latestMem = entries.find(e => e.type==='memorization');
   const latestPos = latestMem
-    ? (latestMem.surahToName||latestMem.surahFromName||'—') + (latestMem.ayahTo?` (آية ${latestMem.ayahTo})`:'')
+    ? (latestMem.surahToName||latestMem.surahFromName||'—') + (latestMem.ayahTo?` آية ${latestMem.ayahTo}`:'')
     : '—';
 
-  const rows = entries.map((p, i) => {
+  // Mobile-friendly cards instead of wide table rows
+  const cards = entries.map((p, i) => {
     if (cnt[p.type] !== undefined) cnt[p.type]++;
-    const from  = [p.surahFromName, p.ayahFrom?`آية ${p.ayahFrom}`:''].filter(Boolean).join(' ') || '—';
-    const to    = [p.surahToName,   p.ayahTo  ?`آية ${p.ayahTo}`  :''].filter(Boolean).join(' ') || '—';
-    const pages = p.pageFrom ? (p.pageTo&&p.pageTo!==p.pageFrom?`${p.pageFrom}–${p.pageTo}`:`${p.pageFrom}`) : '—';
-    const gradeStyle = p.grade ? (GRADE_STYLE[p.grade]||'') : '';
-    const typeBg  = TYPE_BG[p.type]  || '#f8fafc';
-    const typeFg  = TYPE_CLR[p.type] || '#374151';
-    const typeStr = TYPE_AR[p.type]  || p.type || '—';
-    const bg = i%2===0 ? '#f8fafc' : '#ffffff';
-    const repeatDot = (p.isRepeat==='1'||p.isRepeat===true) ? '<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#f97316;margin-left:4px;vertical-align:middle" title="تكرار"></span>' : '';
-    return `<tr style="background:${bg}">
-      <td style="font-size:11px;direction:rtl">${formatHijri(p.date)}</td>
-      <td><span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:${typeBg};color:${typeFg}">${typeStr}</span></td>
-      <td>${from}</td><td>${to}</td>
-      <td style="text-align:center">${p.juz?`جزء ${p.juz}`:'—'}</td>
-      <td style="text-align:center">${pages}</td>
-      <td style="text-align:center">${p.grade?`<span class="badge" style="${gradeStyle}">${p.grade}</span>`:'—'}</td>
-      <td style="color:#64748b;font-size:11px">${repeatDot}${p.notes||'—'}</td>
-    </tr>`;
+    const from     = [p.surahFromName, p.ayahFrom?`آية ${p.ayahFrom}`:''].filter(Boolean).join(' ') || '—';
+    const to       = [p.surahToName,   p.ayahTo  ?`آية ${p.ayahTo}`  :''].filter(Boolean).join(' ') || '—';
+    const pages    = p.pageFrom ? (p.pageTo&&p.pageTo!==p.pageFrom?`${p.pageFrom}–${p.pageTo}`:`${p.pageFrom}`) : null;
+    const typeBg   = TYPE_BG[p.type]  || '#f8fafc';
+    const typeFg   = TYPE_CLR[p.type] || '#374151';
+    const typeStr  = TYPE_AR[p.type]  || p.type || '—';
+    const gradeStyle = p.grade ? (GRADE_STYLE[p.grade]||'background:#f1f5f9;color:#475569') : '';
+    const isRepeat = p.isRepeat==='1'||p.isRepeat===true;
+    return `<div class="card" style="border-right:4px solid ${typeFg}">
+      <div class="card-top">
+        <span class="tag" style="background:${typeBg};color:${typeFg}">${typeStr}${isRepeat?' 🔁':''}</span>
+        <span class="date">${formatHijri(p.date)}</span>
+      </div>
+      <div class="card-range">📖 ${from} ← ${to}${pages?` &nbsp;|&nbsp; 📄 ص${pages}`:''}</div>
+      ${p.juz?`<div class="card-juz">الجزء ${p.juz}</div>`:''}
+      <div class="card-bottom">
+        ${p.grade?`<span class="badge" style="${gradeStyle}">${p.grade}</span>`:''}
+        ${p.notes?`<span class="note">${p.notes}</span>`:''}
+      </div>
+    </div>`;
   }).join('');
 
   const now = new Date().toLocaleDateString('ar-SA', { calendar:'islamic', year:'numeric', month:'long', day:'numeric' });
 
-  return `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="UTF-8">
+  return `<!DOCTYPE html><html dir="rtl" lang="ar"><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>تقدم القرآن — ${s.name}</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;font-family:Arial,Tahoma,'Segoe UI',sans-serif}
-body{background:#fff;color:#111;padding:16px 20px;max-width:960px;margin:auto}
-.ph{background:#1e3a8a;color:#fff;border-radius:10px;padding:14px 20px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center}
-.ph-school{font-size:17px;font-weight:800}.ph-sub{font-size:12px;color:#bfdbfe;margin-top:3px}
-.ph-date{font-size:11px;color:#93c5fd;text-align:left;white-space:nowrap;margin-right:auto;padding-right:16px}
-.stats{display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap}
-.stat{padding:10px 16px;border-radius:8px;text-align:center;min-width:90px;border:1px solid rgba(0,0,0,.06)}
-.stat .n{font-size:22px;font-weight:800}.stat .l{font-size:10px;margin-top:2px;font-weight:600}
+body{background:#f1f5f9;color:#1e293b;padding:12px;max-width:480px;margin:auto}
+.header{background:linear-gradient(135deg,#1e3a8a,#1d4ed8);color:#fff;border-radius:14px;padding:16px;margin-bottom:12px;text-align:center}
+.header h1{font-size:15px;font-weight:800;margin-bottom:4px}
+.header p{font-size:12px;color:#bfdbfe;margin-bottom:2px}
+.header .date{font-size:11px;color:#93c5fd}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px}
+.stat{background:#fff;border-radius:10px;padding:10px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,.07)}
+.stat .n{font-size:24px;font-weight:800}
+.stat .l{font-size:10px;font-weight:700;margin-top:2px}
 .stat .s{font-size:10px;color:#64748b;margin-top:1px}
-.infobar{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 14px;margin-bottom:14px;font-size:12px;color:#374151;display:flex;gap:20px;flex-wrap:wrap}
+.infobar{background:#fff;border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:12px;box-shadow:0 1px 3px rgba(0,0,0,.07)}
+.infobar div{padding:3px 0;border-bottom:1px solid #f1f5f9;display:flex;justify-content:space-between}
+.infobar div:last-child{border:none}
 .infobar strong{color:#1e3a8a}
-table{width:100%;border-collapse:collapse;font-size:12px}
-th{background:#1e3a8a;color:#fff;padding:8px 10px;text-align:right;font-weight:700;font-size:11px}
-td{padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:right;vertical-align:middle}
-.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700}
-.footer{font-size:10px;color:#94a3b8;text-align:center;margin-top:14px;border-top:1px solid #e2e8f0;padding-top:8px}
-@page{size:A4 landscape;margin:10mm}
+.section-title{font-size:12px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;padding-right:4px}
+.card{background:#fff;border-radius:10px;padding:12px;margin-bottom:8px;box-shadow:0 1px 3px rgba(0,0,0,.07)}
+.card-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:7px}
+.tag{display:inline-block;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700}
+.date{font-size:11px;color:#94a3b8}
+.card-range{font-size:13px;color:#1e293b;font-weight:600;margin-bottom:4px;line-height:1.5}
+.card-juz{font-size:11px;color:#64748b;margin-bottom:5px}
+.card-bottom{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:6px}
+.badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700}
+.note{font-size:11px;color:#64748b;font-style:italic}
+.footer{text-align:center;font-size:10px;color:#94a3b8;margin-top:14px;padding-top:10px;border-top:1px solid #e2e8f0}
+@page{size:A4 portrait;margin:8mm}
+@media print{body{background:#fff;padding:0;max-width:100%}}
 </style></head><body>
-<div class="ph">
-  <div>
-    <div class="ph-school">${school}</div>
-    <div class="ph-sub">تقرير تقدم القرآن الكريم — ${s.name}${cls?' — '+cls.name:''}</div>
-  </div>
-  <div class="ph-date">${now}</div>
+<div class="header">
+  <h1>${school}</h1>
+  <p>تقرير تقدم القرآن الكريم</p>
+  <p>👤 ${s.name}${cls?' &nbsp;|&nbsp; 🏫 '+cls.name:''}</p>
+  <div class="date">${now}</div>
 </div>
 <div class="stats">
-  <div class="stat" style="background:#f0f9ff;border-color:#0ea5e9">
+  <div class="stat" style="border-top:3px solid #0ea5e9">
     <div class="n" style="color:#0c4a6e">${entries.length}</div>
     <div class="l" style="color:#0369a1">إجمالي الجلسات</div>
     ${avgGrade?`<div class="s">متوسط ${avgGrade}/10</div>`:''}
   </div>
-  <div class="stat" style="background:#f0fdf4;border-color:#22c55e">
+  <div class="stat" style="border-top:3px solid #22c55e">
     <div class="n" style="color:#14532d">${cnt.memorization}</div>
     <div class="l" style="color:#166534">حفظ جديد</div>
-    ${entries.filter(e=>e.type==='memorization'&&e.grade).length?`<div class="s">متوسط ${(entries.filter(e=>e.type==='memorization'&&e.grade).reduce((s,e)=>s+Number(e.grade),0)/entries.filter(e=>e.type==='memorization'&&e.grade).length).toFixed(1)}/10</div>`:''}
   </div>
-  <div class="stat" style="background:#fefce8;border-color:#eab308">
+  <div class="stat" style="border-top:3px solid #eab308">
     <div class="n" style="color:#713f12">${cnt.revision}</div>
     <div class="l" style="color:#854d0e">مراجعة</div>
-    ${entries.filter(e=>e.type==='revision'&&e.grade).length?`<div class="s">متوسط ${(entries.filter(e=>e.type==='revision'&&e.grade).reduce((s,e)=>s+Number(e.grade),0)/entries.filter(e=>e.type==='revision'&&e.grade).length).toFixed(1)}/10</div>`:''}
   </div>
-  <div class="stat" style="background:#faf5ff;border-color:#a855f7">
+  <div class="stat" style="border-top:3px solid #a855f7">
     <div class="n" style="color:#4a1772">${cnt.recitation}</div>
     <div class="l" style="color:#7e22ce">تلاوة وتجويد</div>
-    ${entries.filter(e=>e.type==='recitation'&&e.grade).length?`<div class="s">متوسط ${(entries.filter(e=>e.type==='recitation'&&e.grade).reduce((s,e)=>s+Number(e.grade),0)/entries.filter(e=>e.type==='recitation'&&e.grade).length).toFixed(1)}/10</div>`:''}
   </div>
-  ${repeatCnt?`<div class="stat" style="background:#fff7ed;border-color:#f97316"><div class="n" style="color:#9a3412">${repeatCnt}</div><div class="l" style="color:#c2410c">جلسات تكرار</div></div>`:''}
 </div>
 <div class="infobar">
-  <span>آخر موقع حفظ: <strong>${latestPos}</strong></span>
-  <span>جلسات بتقييم: <strong>${allGraded.length} / ${entries.length}</strong></span>
-  <span>ولي الأمر: <strong>${s.parentPhone||'—'}</strong></span>
+  <div><span>آخر موقع حفظ</span><strong>${latestPos}</strong></div>
+  <div><span>جلسات بتقييم</span><strong>${allGraded.length} / ${entries.length}</strong></div>
+  ${repeatCnt?`<div><span>جلسات تكرار</span><strong style="color:#ea580c">${repeatCnt}</strong></div>`:''}
+  <div><span>ولي الأمر</span><strong>${s.parentPhone||'—'}</strong></div>
 </div>
-<table>
-  <thead><tr><th>التاريخ</th><th>النوع</th><th>من</th><th>إلى</th><th>الجزء</th><th>الصفحات</th><th>التقييم</th><th>ملاحظات</th></tr></thead>
-  <tbody>${rows||'<tr><td colspan="8" style="text-align:center;padding:20px;color:#888">لا توجد سجلات بعد</td></tr>'}</tbody>
-</table>
+<div class="section-title">سجل الجلسات</div>
+${cards||'<div class="card" style="text-align:center;color:#94a3b8;padding:24px">لا توجد جلسات مسجلة بعد</div>'}
 <div class="footer">${school} — تاريخ الإصدار: ${now}</div>
 </body></html>`;
 }
@@ -2179,7 +2187,7 @@ async function _htmlToPDF(html) {
   try {
     const page = await browser.newPage();
     await page.setContent(html, { waitUntil: 'networkidle0' });
-    const pdf = await page.pdf({ format: 'A4', landscape: true, printBackground: true, margin: { top:'10mm', bottom:'10mm', left:'10mm', right:'10mm' } });
+    const pdf = await page.pdf({ format: 'A4', landscape: false, printBackground: true, margin: { top:'8mm', bottom:'8mm', left:'8mm', right:'8mm' } });
     return pdf;
   } finally {
     await browser.close();
@@ -2419,12 +2427,20 @@ app.post('/api/whatsapp/send-quran-pdf/:studentId', async (req, res) => {
     // 3. Build caption and send via Fonnte
     const cls     = db.classes.find(c => c.id === s.classId);
     const entries = (db.quranProgress || []).filter(p => p.studentId === req.params.studentId);
-    const caption = `السلام عليكم،\n\nإليكم تقرير تقدم القرآن الكريم للطالب *${s.name}*`
-      + (cls ? ` — حلقة ${cls.name}` : '') + `.\n\n`
-      + `إجمالي الجلسات: ${entries.length}\n`
-      + `حفظ جديد: ${entries.filter(e=>e.type==='memorization').length}\n`
-      + `مراجعة: ${entries.filter(e=>e.type==='revision').length}\n\n`
-      + `— ${db.settings.schoolName || 'إدارة الحلقات'}`;
+    const mem  = entries.filter(e=>e.type==='memorization').length;
+    const rev  = entries.filter(e=>e.type==='revision').length;
+    const rec  = entries.filter(e=>e.type==='recitation').length;
+    const caption = `السلام عليكم 👋\n\n`
+      + `📖 *تقرير تقدم القرآن الكريم*\n`
+      + `👤 الطالب: *${s.name}*\n`
+      + (cls ? `🏫 الحلقة: ${cls.name}\n` : '')
+      + `\n`
+      + `📊 *ملخص الجلسات*\n`
+      + `• الإجمالي: ${entries.length} جلسة\n`
+      + `• حفظ جديد: ${mem}\n`
+      + `• مراجعة: ${rev}\n`
+      + (rec ? `• تلاوة وتجويد: ${rec}\n` : '')
+      + `\n— ${db.settings.schoolName || 'إدارة الحلقات'}`;
 
     // Fonnte helper using application/x-www-form-urlencoded — avoids multipart parsing bugs
     // URLSearchParams handles all encoding (newlines → %0A, Arabic → %XX, etc.)
@@ -2456,7 +2472,7 @@ app.post('/api/whatsapp/send-quran-pdf/:studentId', async (req, res) => {
     }
 
     // Send PDF as a clickable link in the message (free plan compatible)
-    const messageWithLink = caption + `\n\n📄 تقرير القرآن الكريم:\n${fileUrl}`;
+    const messageWithLink = caption + `\n\n📄 *اضغط هنا لفتح التقرير كاملاً:*\n${fileUrl}`;
     const fileResult = await fonntePost({
       target:      cleanPhone,
       message:     messageWithLink,
