@@ -2387,7 +2387,7 @@ async function _htmlToPDF(html) {
        .text(`${school}  •  تم الإنشاء تلقائياً بتاريخ ${new Date().toLocaleDateString('ar-SA')}`, M, y+6, { width:W-M*2, align:'center' });
     doc.end();
   });
-}
+
 
 
 app.post('/api/whatsapp/send-quran-pdf/:studentId', async (req, res) => {
