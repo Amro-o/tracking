@@ -2186,6 +2186,7 @@ async function _htmlToPDF(html) {
 }
 
 
+function _buildQuranReportPDF(db, studentId) {
   const s      = db.students.find(x => x.id === studentId);
   if (!s) throw new Error('الطالب غير موجود');
   const cls    = db.classes.find(c => c.id === s.classId);
@@ -2387,6 +2388,7 @@ async function _htmlToPDF(html) {
        .text(`${school}  •  تم الإنشاء تلقائياً بتاريخ ${new Date().toLocaleDateString('ar-SA')}`, M, y+6, { width:W-M*2, align:'center' });
     doc.end();
   });
+} // end _buildQuranReportPDF
 
 
 
