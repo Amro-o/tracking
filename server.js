@@ -2279,20 +2279,34 @@ app.post('/api/whatsapp/send-quran-pdf/:studentId', async (req, res) => {
       + `مراجعة: ${entries.filter(e=>e.type==='revision').length}\n\n`
       + `— ${db.settings.schoolName || 'إدارة الحلقات'}`;
 
-    // Fonnte supports sending a file URL in the same /send payload
+    // Fonnte requires multipart/form-data (NOT JSON) when sending a file URL
     const cleanPhone = String(s.parentPhone).replace(/\D/g, '');
-    const payload    = JSON.stringify({ target:cleanPhone, message:caption, url:urlData.publicUrl, delay:'2', countryCode:'966' });
-    const result     = await new Promise(resolve => {
+    const boundary   = '----FonnteBoundary' + Math.random().toString(36).slice(2);
+    const fields     = { target: cleanPhone, message: caption, url: urlData.publicUrl, delay: '2', countryCode: '966' };
+    const bodyParts  = Object.entries(fields).map(([k, v]) =>
+      `--${boundary}\r\nContent-Disposition: form-data; name="${k}"\r\n\r\n${v}`
+    );
+    const multipartBody = bodyParts.join('\r\n') + '\r\n--' + boundary + '--';
+
+    const result = await new Promise(resolve => {
       const opts = {
-        hostname:'api.fonnte.com', path:'/send', method:'POST',
-        headers:{ 'Authorization':token, 'Content-Type':'application/json', 'Content-Length':Buffer.byteLength(payload) }
+        hostname: 'api.fonnte.com', path: '/send', method: 'POST',
+        headers: {
+          'Authorization':  token,
+          'Content-Type':   `multipart/form-data; boundary=${boundary}`,
+          'Content-Length': Buffer.byteLength(multipartBody)
+        }
       };
       const r = https.request(opts, resp => {
         let d = ''; resp.on('data', c => d += c);
-        resp.on('end', () => { try { const j=JSON.parse(d); resolve({ok:j.status===true,error:j.reason||''}); } catch(e){ resolve({ok:false,error:'bad response'}); } });
+        resp.on('end', () => {
+          console.log('[send-quran-pdf] Fonnte raw:', d.slice(0,300));
+          try { const j=JSON.parse(d); resolve({ ok: j.status===true, error: j.reason||j.message||'' }); }
+          catch(e) { resolve({ ok:false, error:'bad response: '+d.slice(0,100) }); }
+        });
       });
-      r.on('error', e => resolve({ok:false, error:e.message}));
-      r.write(payload); r.end();
+      r.on('error', e => resolve({ ok:false, error: e.message }));
+      r.write(multipartBody); r.end();
     });
 
     // 4. Log
