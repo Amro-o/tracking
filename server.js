@@ -2045,6 +2045,195 @@ app.post('/api/whatsapp/send-custom', async (req, res) => {
 // ════════════════════════════════════════════════════════
 
 // Shared: build the quran report HTML (used by both print endpoint and PDF generator)
+// ════════════════════════════════════════════════════════
+//  Beautiful public HTML report page (mobile-first, no PDF)
+// ════════════════════════════════════════════════════════
+function _buildQuranReportPage(db, studentId) {
+  const s       = db.students.find(x => x.id === studentId);
+  if (!s) throw new Error('الطالب غير موجود');
+  const cls     = db.classes.find(c => c.id === s.classId);
+  const school  = db.settings.schoolName || 'حضور الحلقات';
+  const entries = (db.quranProgress || [])
+    .filter(p => p.studentId === studentId)
+    .sort((a,b) => b.date.localeCompare(a.date));
+
+  const TYPE_AR  = { memorization:'حفظ جديد', revision:'مراجعة', recitation:'تلاوة وتجويد' };
+  const TYPE_CLR = { memorization:'#1d4ed8', revision:'#b45309', recitation:'#7e22ce' };
+  const TYPE_BG  = { memorization:'#eff6ff',  revision:'#fef3c7', recitation:'#faf5ff' };
+  const TYPE_ICON = { memorization:'📗', revision:'🔄', recitation:'🎙️' };
+  const GRADE_STYLE = {
+    'ممتاز':    'background:#dcfce7;color:#166534',
+    'جيد جداً': 'background:#dbeafe;color:#1e40af',
+    'جيد':      'background:#fef3c7;color:#92400e',
+    'مقبول':    'background:#f3f4f6;color:#374151',
+    'ضعيف':     'background:#fee2e2;color:#991b1b',
+  };
+
+  const cnt = { memorization:0, revision:0, recitation:0 };
+  entries.forEach(e => { if(cnt[e.type]!==undefined) cnt[e.type]++; });
+
+  const allGraded = entries.filter(e => e.grade);
+  const avgGrade  = allGraded.length
+    ? (allGraded.reduce((s,e)=>s+Number(e.grade)||0,0)/allGraded.length).toFixed(1) : null;
+  const repeatCnt = entries.filter(e => e.isRepeat==='1'||e.isRepeat===true).length;
+  const latestMem = entries.find(e => e.type==='memorization');
+  const latestPos = latestMem
+    ? (latestMem.surahToName||latestMem.surahFromName||'—') + (latestMem.ayahTo ? ` (آية ${latestMem.ayahTo})` : '')
+    : '—';
+
+  const now = new Date().toLocaleDateString('ar-SA', { calendar:'islamic', year:'numeric', month:'long', day:'numeric' });
+
+  const cards = entries.map((p,i) => {
+    const from     = [p.surahFromName, p.ayahFrom?`آية ${p.ayahFrom}`:''].filter(Boolean).join(' ') || '—';
+    const to       = [p.surahToName,   p.ayahTo  ?`آية ${p.ayahTo}`  :''].filter(Boolean).join(' ') || '—';
+    const pages    = p.pageFrom ? (p.pageTo&&p.pageTo!==p.pageFrom?`${p.pageFrom}–${p.pageTo}`:`${p.pageFrom}`) : null;
+    const typeFg   = TYPE_CLR[p.type]  || '#475569';
+    const typeBg   = TYPE_BG[p.type]   || '#f8fafc';
+    const typeIcon = TYPE_ICON[p.type] || '📝';
+    const typeStr  = TYPE_AR[p.type]   || p.type || '—';
+    const grade    = p.grade ? (GRADE_STYLE[p.grade]||'background:#f1f5f9;color:#475569') : null;
+    const isRepeat = p.isRepeat==='1'||p.isRepeat===true;
+    const alt      = i%2===0?'#ffffff':'#fafbff';
+    return `
+    <div class="card" style="border-right:3px solid ${typeFg};background:${alt}">
+      <div class="card-header">
+        <span class="type-badge" style="background:${typeBg};color:${typeFg}">${typeIcon} ${typeStr}${isRepeat?' 🔁':''}</span>
+        <span class="card-date">${formatHijri(p.date)}</span>
+      </div>
+      <div class="card-range">📖 ${from} ← ${to}</div>
+      <div class="card-meta">
+        ${p.juz?`<span>📚 الجزء ${p.juz}</span>`:''}
+        ${pages?`<span>📄 ص ${pages}</span>`:''}
+        ${grade?`<span class="grade" style="${grade}">${p.grade}</span>`:''}
+        ${isRepeat?'<span class="repeat-tag">تكرار</span>':''}
+      </div>
+      ${p.notes?`<div class="card-notes">💬 ${p.notes}</div>`:''}
+    </div>`;
+  }).join('');
+
+  return `<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>تقرير ${s.name} — ${school}</title>
+<style>
+  :root {
+    --blue:  #1d4ed8; --blue-light: #eff6ff;
+    --green: #16a34a; --green-light:#f0fdf4;
+    --amber: #d97706; --amber-light:#fef3c7;
+    --purple:#7e22ce; --purple-light:#faf5ff;
+    --slate: #475569; --surface:#f8fafc;
+    --radius:14px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  body{background:#eef2f7;font-family:Arial,Tahoma,'Segoe UI',sans-serif;color:#1e293b;min-height:100vh;padding-bottom:32px}
+
+  /* ── Header ── */
+  .hero{background:linear-gradient(145deg,#0f2d6b 0%,#1d4ed8 60%,#3b82f6 100%);color:#fff;padding:28px 20px 22px;text-align:center;position:relative;overflow:hidden}
+  .hero::before{content:'';position:absolute;inset:0;background:url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.04'%3E%3Ccircle cx='30' cy='30' r='20'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")}
+  .hero-icon{font-size:40px;margin-bottom:8px}
+  .hero-school{font-size:13px;font-weight:700;letter-spacing:1px;color:#93c5fd;text-transform:uppercase;margin-bottom:6px}
+  .hero-name{font-size:22px;font-weight:900;margin-bottom:4px}
+  .hero-class{font-size:13px;color:#bfdbfe;margin-bottom:8px}
+  .hero-date{display:inline-block;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);border-radius:20px;padding:4px 14px;font-size:12px;color:#e0f2fe}
+
+  /* ── Section wrapper ── */
+  .wrap{max-width:520px;margin:0 auto;padding:0 12px}
+
+  /* ── Stats grid ── */
+  .stats{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:16px 0}
+  .stat{background:#fff;border-radius:var(--radius);padding:14px 12px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.06);position:relative;overflow:hidden}
+  .stat::after{content:'';position:absolute;bottom:0;left:0;right:0;height:3px}
+  .stat-total::after{background:var(--blue)}
+  .stat-mem::after{background:var(--green)}
+  .stat-rev::after{background:var(--amber)}
+  .stat-rec::after{background:var(--purple)}
+  .stat-num{font-size:30px;font-weight:900;line-height:1}
+  .stat-label{font-size:11px;font-weight:700;margin-top:5px}
+  .stat-sub{font-size:10px;color:var(--slate);margin-top:2px}
+
+  /* ── Info panel ── */
+  .info-panel{background:#fff;border-radius:var(--radius);padding:14px 16px;margin-bottom:14px;box-shadow:0 2px 8px rgba(0,0,0,.06)}
+  .info-row{display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid #f1f5f9;font-size:13px}
+  .info-row:last-child{border:none;padding-bottom:0}
+  .info-row span:first-child{color:var(--slate)}
+  .info-row strong{color:#1e293b;font-weight:700;text-align:left;max-width:65%;word-break:break-all}
+
+  /* ── Section title ── */
+  .section-head{display:flex;align-items:center;gap:8px;margin:18px 0 10px;font-size:13px;font-weight:800;color:var(--slate);text-transform:uppercase;letter-spacing:.5px}
+  .section-head::after{content:'';flex:1;height:1px;background:#e2e8f0}
+
+  /* ── Session cards ── */
+  .card{border-radius:var(--radius);padding:12px 14px;margin-bottom:8px;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+  .card-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+  .type-badge{display:inline-flex;align-items:center;gap:4px;padding:4px 11px;border-radius:20px;font-size:11px;font-weight:800}
+  .card-date{font-size:11px;color:#94a3b8;white-space:nowrap}
+  .card-range{font-size:14px;font-weight:700;color:#1e293b;margin-bottom:6px;line-height:1.5}
+  .card-meta{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:4px}
+  .card-meta span{font-size:11px;color:var(--slate);background:#f1f5f9;border-radius:8px;padding:2px 8px}
+  .grade{font-size:11px;font-weight:700;border-radius:20px;padding:2px 10px!important;background:transparent}
+  .repeat-tag{background:#fff7ed;color:#c2410c;font-weight:700;border-radius:8px;padding:2px 8px;font-size:11px}
+  .card-notes{font-size:12px;color:var(--slate);font-style:italic;margin-top:5px;padding-top:5px;border-top:1px dashed #e2e8f0}
+
+  /* ── Empty state ── */
+  .empty{text-align:center;padding:40px 20px;color:#94a3b8;background:#fff;border-radius:var(--radius);font-size:14px}
+
+  /* ── Footer ── */
+  .footer{text-align:center;font-size:11px;color:#94a3b8;margin-top:24px}
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <div class="hero-icon">📖</div>
+  <div class="hero-school">${school}</div>
+  <div class="hero-name">${s.name}</div>
+  ${cls?`<div class="hero-class">🏫 ${cls.name}</div>`:''}
+  <div class="hero-date">${now}</div>
+</div>
+
+<div class="wrap">
+
+  <!-- Stats -->
+  <div class="stats">
+    <div class="stat stat-total">
+      <div class="stat-num" style="color:var(--blue)">${entries.length}</div>
+      <div class="stat-label" style="color:var(--blue)">إجمالي الجلسات</div>
+      ${avgGrade?`<div class="stat-sub">متوسط التقييم ${avgGrade}/10</div>`:''}
+    </div>
+    <div class="stat stat-mem">
+      <div class="stat-num" style="color:var(--green)">${cnt.memorization}</div>
+      <div class="stat-label" style="color:var(--green)">📗 حفظ جديد</div>
+    </div>
+    <div class="stat stat-rev">
+      <div class="stat-num" style="color:var(--amber)">${cnt.revision}</div>
+      <div class="stat-label" style="color:var(--amber)">🔄 مراجعة</div>
+    </div>
+    <div class="stat stat-rec">
+      <div class="stat-num" style="color:var(--purple)">${cnt.recitation}</div>
+      <div class="stat-label" style="color:var(--purple)">🎙️ تلاوة وتجويد</div>
+    </div>
+  </div>
+
+  <!-- Info panel -->
+  <div class="info-panel">
+    <div class="info-row"><span>📍 آخر موقع حفظ</span><strong>${latestPos}</strong></div>
+    <div class="info-row"><span>✅ جلسات بتقييم</span><strong>${allGraded.length} / ${entries.length}</strong></div>
+    ${repeatCnt?`<div class="info-row"><span>🔁 جلسات تكرار</span><strong style="color:#ea580c">${repeatCnt}</strong></div>`:''}
+  </div>
+
+  <!-- Session cards -->
+  <div class="section-head">سجل الجلسات</div>
+  ${cards || '<div class="empty">لا توجد جلسات مسجلة بعد</div>'}
+
+  <div class="footer">${school} &nbsp;•&nbsp; تقرير تلقائي &nbsp;•&nbsp; ${now}</div>
+</div>
+
+</body>
+</html>`;
+}
+
 function _buildQuranReportHTML(db, studentId) {
   const s       = db.students.find(x => x.id === studentId);
   if (!s) throw new Error('الطالب غير موجود');
@@ -2401,92 +2590,79 @@ function _buildQuranReportPDF(db, studentId) {
 
 
 
+// ════════════════════════════════════════════════════════
+//  Public student Quran report page (HTML — no auth required)
+// ════════════════════════════════════════════════════════
+app.get('/report/quran/:studentId', (req, res) => {
+  try {
+    const db   = readDB();
+    const html = _buildQuranReportPage(db, req.params.studentId);
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(html);
+  } catch(e) {
+    res.status(404).send(`<h2 style="font-family:sans-serif;text-align:center;margin-top:60px;color:#991b1b">⚠️ ${e.message}</h2>`);
+  }
+});
+
+// ════════════════════════════════════════════════════════
+//  WhatsApp — Send Quran report link
+// ════════════════════════════════════════════════════════
 app.post('/api/whatsapp/send-quran-pdf/:studentId', async (req, res) => {
   const db    = readDB();
   const token = db.settings.whatsappApiKey;
   if (!token) return res.json({ ok:false, error:'Fonnte Token غير مُعيَّن في الإعدادات' });
 
   const s = db.students.find(x => x.id === req.params.studentId);
-  if (!s)            return res.status(404).json({ ok:false, error:'الطالب غير موجود' });
+  if (!s)             return res.status(404).json({ ok:false, error:'الطالب غير موجود' });
   if (!s.parentPhone) return res.json({ ok:false, error:'لا يوجد رقم هاتف لولي الأمر' });
 
   try {
-    // 1. Generate PDF from HTML (proper Arabic rendering via Puppeteer)
-    const html   = _buildQuranReportHTML(db, req.params.studentId);
-    const pdfBuf = await _htmlToPDF(html);
-
-    // 2. Upload to Supabase Storage
-    const filename = `quran-${req.params.studentId}-${Date.now()}.pdf`;
-    const { error: upErr } = await _supabase.storage
-      .from(STORAGE_BUCKET).upload(filename, pdfBuf, { contentType:'application/pdf', upsert:true });
-    if (upErr) throw new Error('فشل رفع الملف: ' + upErr.message);
-    // Use permanent public URL — Fonnte cannot handle Supabase signed URLs (complex query params)
-    const { data: urlData } = _supabase.storage.from(STORAGE_BUCKET).getPublicUrl(filename);
-    const fileUrl = urlData.publicUrl;
-
-    // 3. Build caption and send via Fonnte
     const cls     = db.classes.find(c => c.id === s.classId);
     const entries = (db.quranProgress || []).filter(p => p.studentId === req.params.studentId);
-    const mem  = entries.filter(e=>e.type==='memorization').length;
-    const rev  = entries.filter(e=>e.type==='revision').length;
-    const rec  = entries.filter(e=>e.type==='recitation').length;
+    const mem = entries.filter(e=>e.type==='memorization').length;
+    const rev = entries.filter(e=>e.type==='revision').length;
+    const rec = entries.filter(e=>e.type==='recitation').length;
+
+    // Build the public report URL from the incoming request host
+    const proto   = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+    const host    = req.headers['x-forwarded-host']  || req.headers.host;
+    const reportUrl = `${proto}://${host}/report/quran/${req.params.studentId}`;
+
     const caption = `السلام عليكم 👋\n\n`
       + `📖 *تقرير تقدم القرآن الكريم*\n`
       + `👤 الطالب: *${s.name}*\n`
       + (cls ? `🏫 الحلقة: ${cls.name}\n` : '')
-      + `\n`
-      + `📊 *ملخص الجلسات*\n`
+      + `\n📊 *ملخص الجلسات*\n`
       + `• الإجمالي: ${entries.length} جلسة\n`
       + `• حفظ جديد: ${mem}\n`
       + `• مراجعة: ${rev}\n`
       + (rec ? `• تلاوة وتجويد: ${rec}\n` : '')
-      + `\n— ${db.settings.schoolName || 'إدارة الحلقات'}`;
+      + `\n🔗 *اضغط لعرض التقرير كاملاً:*\n${reportUrl}\n\n`
+      + `— ${db.settings.schoolName || 'إدارة الحلقات'}`;
 
-    // Fonnte helper using application/x-www-form-urlencoded — avoids multipart parsing bugs
-    // URLSearchParams handles all encoding (newlines → %0A, Arabic → %XX, etc.)
     const cleanPhone = String(s.parentPhone).replace(/\D/g, '');
 
-    function fonntePost(fields) {
-      return new Promise(resolve => {
-        const body    = new URLSearchParams(fields).toString();
-        const bodyBuf = Buffer.from(body, 'utf8');
-        const opts = {
-          hostname: 'api.fonnte.com', path: '/send', method: 'POST',
-          headers: {
-            'Authorization': token,
-            'Content-Type':  'application/x-www-form-urlencoded',
-            'Content-Length': bodyBuf.length
-          }
-        };
-        const r = https.request(opts, resp => {
-          let d = ''; resp.on('data', c => d += c);
-          resp.on('end', () => {
-            console.log('[send-quran-pdf] Fonnte raw:', d.slice(0, 300));
-            try { const j = JSON.parse(d); resolve({ ok: !!j.status, error: j.reason || j.message || '' }); }
-            catch(e) { resolve({ ok: false, error: 'bad response: ' + d.slice(0, 100) }); }
-          });
+    const result = await new Promise(resolve => {
+      const body    = new URLSearchParams({ target: cleanPhone, message: caption, countryCode: '966', delay: '2' }).toString();
+      const bodyBuf = Buffer.from(body, 'utf8');
+      const r = https.request({
+        hostname:'api.fonnte.com', path:'/send', method:'POST',
+        headers:{ 'Authorization':token, 'Content-Type':'application/x-www-form-urlencoded', 'Content-Length':bodyBuf.length }
+      }, resp => {
+        let d=''; resp.on('data', c => d+=c);
+        resp.on('end', () => {
+          console.log('[send-quran-report] Fonnte raw:', d.slice(0,300));
+          try { const j=JSON.parse(d); resolve({ ok:!!j.status, error:j.reason||j.message||'' }); }
+          catch(e){ resolve({ ok:false, error:'bad response: '+d.slice(0,100) }); }
         });
-        r.on('error', e => resolve({ ok: false, error: e.message }));
-        r.write(bodyBuf); r.end();
       });
-    }
-
-    // Send PDF as a clickable link in the message (free plan compatible)
-    const messageWithLink = caption + `\n\n📄 *اضغط هنا لفتح التقرير كاملاً:*\n${fileUrl}`;
-    const fileResult = await fonntePost({
-      target:      cleanPhone,
-      message:     messageWithLink,
-      countryCode: '966',
-      delay:       '2'
+      r.on('error', e => resolve({ ok:false, error:e.message }));
+      r.write(bodyBuf); r.end();
     });
-    console.log('[send-quran-pdf] file result:', JSON.stringify(fileResult));
 
-    const result = { ok: fileResult.ok, error: fileResult.error || '' };
-
-    // 4. Log
     saveDB(db2 => {
       db2.waLog = db2.waLog || [];
-      db2.waLog.push({ id:newId(), type:'quran-pdf', date:nowDate(),
+      db2.waLog.push({ id:newId(), type:'quran-report', date:nowDate(),
         studentId:req.params.studentId, studentName:s.name, phone:s.parentPhone,
         className:cls?.name||'', classId:s.classId||'',
         message:caption, status:result.ok?'sent':'failed',
@@ -2495,7 +2671,7 @@ app.post('/api/whatsapp/send-quran-pdf/:studentId', async (req, res) => {
 
     res.json({ ok:result.ok, error:result.error||'' });
   } catch(e) {
-    console.error('[send-quran-pdf]', e.message);
+    console.error('[send-quran-report]', e.message);
     res.status(500).json({ ok:false, error:e.message });
   }
 });
