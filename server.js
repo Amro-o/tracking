@@ -1404,6 +1404,33 @@ app.post('/api/teacher-log/checkout', (req, res) => {
   res.json({ok:true, duration});
 });
 
+// تصحيح يدوي لوقت الحضور/الانصراف (عندما ينسى المشرف تسجيل الدخول أو الخروج في وقتها)
+app.post('/api/teacher-log/manual', (req, res) => {
+  const {teacherId, date, checkIn, checkOut} = req.body;
+  if (!teacherId || !date) return res.json({error:'بيانات ناقصة'});
+  if (!checkIn && !checkOut) return res.json({error:'الرجاء إدخال وقت الحضور أو الانصراف'});
+  const db = readDB();
+  let entry = db.teacherLog.find(l => l.teacherId === teacherId && l.date === date);
+  if (!entry) {
+    entry = {id:newId(), teacherId, date, checkIn:null, checkOut:null};
+    db.teacherLog.push(entry);
+  }
+  if (checkIn)  entry.checkIn  = checkIn;
+  if (checkOut) entry.checkOut = checkOut;
+  writeDB(db);
+  res.json({ok:true, entry});
+});
+
+// حذف تسجيل حضور معلم (تصحيح خطأ)
+app.delete('/api/teacher-log/:id', (req, res) => {
+  const db = readDB();
+  const before = db.teacherLog.length;
+  db.teacherLog = db.teacherLog.filter(l => l.id !== req.params.id);
+  if (db.teacherLog.length === before) return res.json({error:'لم يتم العثور على السجل'});
+  writeDB(db);
+  res.json({ok:true});
+});
+
 
 // ════════════════════════════════════════════════════════
 //  6. الإجازات
