@@ -2042,6 +2042,28 @@
   </div>
 </div>
 
+<!-- نافذة تصحيح حضور/انصراف المعلم يدوياً -->
+<div class="modal-overlay hidden" id="teacherLogEditModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="teacherLogEditTitle">تصحيح وقت الحضور/الانصراف</h3>
+      <button class="btn-icon" onclick="closeModal('teacherLogEditModal')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="tleTeacherId" />
+      <div class="form-group"><label>المعلم</label><input type="text" id="tleTeacherName" disabled /></div>
+      <div class="form-group"><label>التاريخ</label><input type="date" id="tleDate" onchange="onTleDateChange()" /></div>
+      <div class="form-group"><label>وقت الحضور</label><input type="time" id="tleCheckIn" /></div>
+      <div class="form-group"><label>وقت الانصراف</label><input type="time" id="tleCheckOut" /></div>
+      <div class="info-banner" style="font-size:12px;margin-top:4px">اترك أي حقل فارغاً إن كنت لا تريد تعديله.</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="closeModal('teacherLogEditModal')">إلغاء</button>
+      <button class="btn-primary" onclick="saveTeacherLogEdit()">حفظ</button>
+    </div>
+  </div>
+</div>
+
 <!-- نافذة الإجازة -->
 <div class="modal-overlay hidden" id="holidayModal">
   <div class="modal">
