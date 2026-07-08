@@ -207,6 +207,9 @@ function renderCheckinList() {
       <div style="display:flex;flex-direction:column;gap:6px;margin-right:8px">
         ${!log ? `<button class="btn-primary" style="font-size:12px;padding:8px 12px" onclick="checkIn('${t.id}')">تسجيل حضور</button>` : ''}
         ${log && !log.checkOut ? `<button class="btn-secondary" style="font-size:12px;padding:8px 12px" onclick="checkOut('${t.id}')">تسجيل انصراف</button>` : ''}
+        <button class="btn-secondary" style="font-size:12px;padding:8px 12px" onclick="openTeacherLogEditModal('${t.id}')" title="تصحيح الوقت يدوياً">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-left:3px"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg> تصحيح الوقت
+        </button>
       </div>`;
     list.appendChild(row);
   });
@@ -226,6 +229,46 @@ async function checkOut(teacherId) {
   renderCheckinList();
   loadTeacherSummary();
   toast(`<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-left:3px;flex-shrink:0"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> تم تسجيل الانصراف! ${duration ? '| المدة: '+duration : ''}`);
+}
+
+// ── تصحيح يدوي لوقت الحضور/الانصراف (عندما ينسى المشرف التسجيل في وقته) ──
+function openTeacherLogEditModal(teacherId) {
+  const t   = state.teachers.find(x => x.id === teacherId);
+  if (!t) return;
+  const log = state.teacherLog.find(l => l.teacherId === teacherId); // سجل اليوم الحالي (state.teacherLog محمّل ليوم اليوم فقط)
+  document.getElementById('tleTeacherId').value   = teacherId;
+  document.getElementById('tleTeacherName').value = t.name;
+  document.getElementById('tleDate').value        = todayISO();
+  document.getElementById('tleCheckIn').value     = log?.checkIn  || '';
+  document.getElementById('tleCheckOut').value    = log?.checkOut || '';
+  document.getElementById('teacherLogEditModal').classList.remove('hidden');
+}
+
+async function onTleDateChange() {
+  const teacherId = document.getElementById('tleTeacherId').value;
+  const date      = document.getElementById('tleDate').value;
+  if (!teacherId || !date) return;
+  const logs = await apiFetch('/teacher-log?date=' + date);
+  const log  = (logs || []).find(l => l.teacherId === teacherId);
+  document.getElementById('tleCheckIn').value  = log?.checkIn  || '';
+  document.getElementById('tleCheckOut').value = log?.checkOut || '';
+}
+
+async function saveTeacherLogEdit() {
+  const teacherId = document.getElementById('tleTeacherId').value;
+  const date      = document.getElementById('tleDate').value;
+  const checkIn   = document.getElementById('tleCheckIn').value;
+  const checkOut  = document.getElementById('tleCheckOut').value;
+  if (!date) return toast('الرجاء اختيار التاريخ');
+  if (!checkIn && !checkOut) return toast('الرجاء إدخال وقت الحضور أو الانصراف');
+  const res = await apiFetch('/teacher-log/manual', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ teacherId, date, checkIn: checkIn || null, checkOut: checkOut || null }),
+  });
+  if (res?.error) return toast('<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-left:3px;flex-shrink:0"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> '+res.error);
+  closeModal('teacherLogEditModal');
+  await loadAll(); renderCheckinList(); loadTeacherSummary();
+  toast('<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-left:3px;flex-shrink:0"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> تم تصحيح الوقت بنجاح');
 }
 
 // ── ملخص ساعات المعلمين اليومية ──────────────────────
