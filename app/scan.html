@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
 <title>مسح رمز الحضور</title>
 <link rel="stylesheet" href="/styles.css" />
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jsqr/1.4.0/jsQR.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
 <style>
   html,body{height:100%}
   body{
@@ -59,6 +59,11 @@
   let scanning = true;
 
   async function startCamera() {
+    if (typeof jsQR !== 'function') {
+      status.className = 'sc-status err';
+      status.textContent = 'تعذّر تحميل مكتبة قراءة الرمز (تحقق من اتصال الإنترنت) — أعد تحميل الصفحة.';
+      return;
+    }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: 'environment' }, audio: false,
@@ -75,16 +80,20 @@
 
   function tick() {
     if (!scanning) return;
-    if (video.readyState === video.HAVE_ENOUGH_DATA) {
-      canvas.width  = video.videoWidth;
-      canvas.height = video.videoHeight;
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'dontInvert' });
-      if (code && code.data) {
-        onCodeFound(code.data);
-        return;
+    try {
+      if (video.readyState === video.HAVE_ENOUGH_DATA && video.videoWidth > 0) {
+        canvas.width  = video.videoWidth;
+        canvas.height = video.videoHeight;
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'attemptBoth' });
+        if (code && code.data) {
+          onCodeFound(code.data);
+          return;
+        }
       }
+    } catch (e) {
+      console.error('scan tick error:', e);
     }
     requestAnimationFrame(tick);
   }
