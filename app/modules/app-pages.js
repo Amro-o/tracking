@@ -75,7 +75,7 @@ function renderTeacherList() {
   const list = document.getElementById('teacherList');
   list.innerHTML = '';
   if (state.teachers.length === 0) {
-    list.innerHTML = '<div class="info-banner">لا يوجد معلمون بعد. أضف معلمًا للبدء.</div>'; return;
+    list.innerHTML = '<div class="info-banner">لا يوجد معلمون أو مشرفون بعد. أضف واحدًا للبدء.</div>'; return;
   }
   state.teachers.forEach(t => {
     try {
@@ -116,7 +116,7 @@ function renderTeacherList() {
 function openTeacherModal(id=null) {
   if (id) {
     const t = state.teachers.find(x=>x.id===id); if (!t) return;
-    document.getElementById('teacherModalTitle').textContent = 'تعديل بيانات المعلم';
+    document.getElementById('teacherModalTitle').textContent = 'تعديل بيانات المعلم/المشرف';
     document.getElementById('teacherId').value       = t.id;
     document.getElementById('fTeacherId').value      = t.teacherId||'';
     document.getElementById('fTeacherName').value    = t.name;
@@ -133,7 +133,7 @@ function openTeacherModal(id=null) {
       if (placeholder) placeholder.style.display = '';
     }
   } else {
-    document.getElementById('teacherModalTitle').textContent = 'إضافة معلم';
+    document.getElementById('teacherModalTitle').textContent = 'إضافة معلم/مشرف';
     ['teacherId','fTeacherId','fTeacherName','fTeacherSubject','fTeacherPhone','fTeacherPin'].forEach(i=>document.getElementById(i).value='');
     const prev = document.getElementById('fTeacherPhotoPreview');
     prev.classList.add('hidden');
@@ -208,7 +208,7 @@ function renderCheckinList() {
   const list     = document.getElementById('checkinList');
   list.innerHTML = '';
   if (teachers.length === 0) {
-    list.innerHTML = '<div class="info-banner">لا يوجد معلمون.</div>'; return;
+    list.innerHTML = '<div class="info-banner">لا يوجد معلمون أو مشرفون.</div>'; return;
   }
   teachers.forEach(t => {
     try {
