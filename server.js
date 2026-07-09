@@ -59,7 +59,8 @@ const DEFAULT_DB = {
     telegramBotToken: '',
     telegramChatId: '',
     logos: [],
-    calendarType: 'hijri'
+    calendarType: 'hijri',
+    checkinToken: null
   }
 };
 
@@ -165,6 +166,30 @@ function saveDB(fn) {
 }
 
 function newId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+
+// ── رقم سري (4 أرقام) لتسجيل حضور المعلمين عبر QR ─────────
+function genAttendancePin(excludeTeacherId) {
+  const db   = readDB();
+  const used = new Set(db.teachers.filter(t => t.id !== excludeTeacherId).map(t => t.attendancePin).filter(Boolean));
+  let pin;
+  do { pin = String(Math.floor(1000 + Math.random() * 9000)); } while (used.has(pin));
+  return pin;
+}
+
+// ── رمز عشوائي لرابط/رمز QR الخاص بتسجيل الحضور (يُبطِل الرمز القديم عند التوليد) ──
+function genCheckinToken() {
+  return Math.random().toString(36).slice(2, 8) + Math.random().toString(36).slice(2, 8);
+}
+
+function buildCheckinUrls(req, token) {
+  const proto = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+  const host  = req.headers['x-forwarded-host']  || req.headers.host;
+  const base  = `${proto}://${host}`;
+  return {
+    checkinUrl: `${base}/checkin?t=${token}`,
+    scanUrl:    `${base}/scan?t=${token}`,
+  };
+}
 
 // ── التوقيت المحلي (مع دعم المنطقة الزمنية) ─────────────
 // يستخدم Intl.DateTimeFormat لضمان الحصول على التوقيت الصحيح
@@ -1029,6 +1054,24 @@ app.get('/admission', (req, res) => {
   res.status(404).send('admission.html not found');
 });
 
+// صفحة تسجيل الحضور/الانصراف الذاتي بالرقم السري (يفتحها QR مباشرة)
+app.get('/checkin', (req, res) => {
+  const fromApp  = path.join(APP_DIR, 'checkin.html');
+  const fromRoot = path.join(ROOT_DIR, 'checkin.html');
+  if (fs.existsSync(fromApp))  return res.sendFile(fromApp);
+  if (fs.existsSync(fromRoot)) return res.sendFile(fromRoot);
+  res.status(404).send('checkin.html not found');
+});
+
+// صفحة الماسح الضوئي داخل المتصفح (لمن لا تدعم كاميرا هاتفه قراءة QR مباشرة)
+app.get('/scan', (req, res) => {
+  const fromApp  = path.join(APP_DIR, 'scan.html');
+  const fromRoot = path.join(ROOT_DIR, 'scan.html');
+  if (fs.existsSync(fromApp))  return res.sendFile(fromApp);
+  if (fs.existsSync(fromRoot)) return res.sendFile(fromRoot);
+  res.status(404).send('scan.html not found');
+});
+
 // Public POST — لا يحتاج تسجيل دخول (للطلاب وأولياء الأمور)
 app.post('/api/public/admissions', (req, res) => {
   const id = newId();
@@ -1349,14 +1392,34 @@ app.get('/api/teachers/:id', (req, res) => {
   res.json({ ...t, log: logWithDuration, totalMins, daysPresent, monthlyMins, todayMins, todayLive, monthlyHistory });
 });
 app.post('/api/teachers', (req, res) => {
-  const id=newId(); saveDB(db=>db.teachers.push({...req.body,id})); res.json({id});
+  const body = {...req.body};
+  if (body.attendancePin) {
+    if (!/^\d{4}$/.test(body.attendancePin)) return res.json({error:'الرقم السري يجب أن يكون 4 أرقام'});
+    if (readDB().teachers.some(t => t.attendancePin === body.attendancePin)) return res.json({error:'هذا الرقم السري مستخدم من قبل معلم آخر'});
+  }
+  const id=newId(); saveDB(db=>db.teachers.push({...body,id})); res.json({id});
 });
 app.put('/api/teachers/:id', (req, res) => {
-  saveDB(db=>{ const i=db.teachers.findIndex(t=>t.id===req.params.id); if(i>=0) db.teachers[i]={...db.teachers[i],...req.body,id:req.params.id}; });
+  const body = {...req.body};
+  if (body.attendancePin) {
+    if (!/^\d{4}$/.test(body.attendancePin)) return res.json({error:'الرقم السري يجب أن يكون 4 أرقام'});
+    if (readDB().teachers.some(t => t.attendancePin === body.attendancePin && t.id !== req.params.id)) return res.json({error:'هذا الرقم السري مستخدم من قبل معلم آخر'});
+  }
+  saveDB(db=>{ const i=db.teachers.findIndex(t=>t.id===req.params.id); if(i>=0) db.teachers[i]={...db.teachers[i],...body,id:req.params.id}; });
   res.json({ok:true});
 });
 app.delete('/api/teachers/:id', (req, res) => {
   saveDB(db=>{ db.teachers=db.teachers.filter(t=>t.id!==req.params.id); }); res.json({ok:true});
+});
+
+// توليد رقم سري عشوائي (4 أرقام) فريد لمعلم — يستخدمه المدير/المشرف فقط من لوحة التحكم
+app.post('/api/teachers/:id/attendance-pin/generate', (req, res) => {
+  const db = readDB();
+  const t  = db.teachers.find(x => x.id === req.params.id);
+  if (!t) return res.status(404).json({error:'المعلم غير موجود'});
+  const pin = genAttendancePin(req.params.id);
+  saveDB(d => { const i = d.teachers.findIndex(x => x.id === req.params.id); if (i>=0) d.teachers[i].attendancePin = pin; });
+  res.json({ok:true, pin});
 });
 
 
@@ -1429,6 +1492,74 @@ app.delete('/api/teacher-log/:id', (req, res) => {
   if (db.teacherLog.length === before) return res.json({error:'لم يتم العثور على السجل'});
   writeDB(db);
   res.json({ok:true});
+});
+
+// ── رمز QR لتسجيل الحضور الذاتي (المدير/المشرف فقط من الواجهة) ──
+app.get('/api/checkin-token', (req, res) => {
+  const db = readDB();
+  let token = db.settings.checkinToken;
+  if (!token) { token = genCheckinToken(); saveDB(d => { d.settings.checkinToken = token; }); }
+  res.json({ token, ...buildCheckinUrls(req, token) });
+});
+
+app.post('/api/checkin-token/regenerate', (req, res) => {
+  const token = genCheckinToken();
+  saveDB(db => { db.settings.checkinToken = token; });
+  res.json({ ok:true, token, ...buildCheckinUrls(req, token) });
+});
+
+// ── تسجيل حضور/انصراف ذاتي بواسطة الرقم السري (عبر مسح رمز QR) ──
+// أول مسح في اليوم = تسجيل حضور، ثاني مسح = تسجيل انصراف،
+// وإن كان مسجّلاً حضوره وانصرافه بالفعل (سواء ذاتياً أو من المشرف) يتم إخباره بذلك بدل التكرار.
+app.post('/api/teacher-log/pin-checkin', (req, res) => {
+  const { pin, token } = req.body;
+  const db = readDB();
+  if (!db.settings.checkinToken || token !== db.settings.checkinToken) {
+    return res.json({ error: 'رمز QR غير صالح أو منتهي. يرجى مسح آخر رمز فعّال من الإدارة.' });
+  }
+  if (!pin || !/^\d{4}$/.test(String(pin))) {
+    return res.json({ error: 'الرجاء إدخال رقمك السري المكوّن من 4 أرقام' });
+  }
+  const teacher = db.teachers.find(t => t.attendancePin === String(pin));
+  if (!teacher) return res.json({ error: 'الرقم السري غير صحيح' });
+
+  const today = nowDate();
+  const time  = nowTime();
+
+  // إغلاق أي جلسات سابقة مفتوحة نسي فيها المعلم تسجيل الانصراف
+  db.teacherLog.forEach(l => {
+    if (l.teacherId === teacher.id && l.date < today && l.checkIn && !l.checkOut) {
+      const [hIn, mIn] = l.checkIn.split(':').map(Number);
+      const tot = Math.min(hIn*60 + mIn + 240, 1439);
+      l.checkOut = String(Math.floor(tot/60)).padStart(2,'0') + ':' + String(tot%60).padStart(2,'0');
+    }
+  });
+
+  let entry = db.teacherLog.find(l => l.teacherId === teacher.id && l.date === today);
+
+  if (!entry) {
+    entry = { id:newId(), teacherId:teacher.id, date:today, checkIn:time, checkOut:null };
+    db.teacherLog.push(entry);
+    writeDB(db);
+    return res.json({ ok:true, action:'checkin', teacherName:teacher.name, time });
+  }
+  if (!entry.checkIn) {
+    entry.checkIn = time;
+    writeDB(db);
+    return res.json({ ok:true, action:'checkin', teacherName:teacher.name, time });
+  }
+  if (!entry.checkOut) {
+    entry.checkOut = time;
+    writeDB(db);
+    const mins = calcSessionMins(entry.checkIn, time);
+    const duration = `${Math.floor(mins/60)} ساعة ${mins%60} دقيقة`;
+    return res.json({ ok:true, action:'checkout', teacherName:teacher.name, time, duration, checkIn:entry.checkIn });
+  }
+  // تم تسجيل حضوره وانصرافه مسبقاً اليوم (ذاتياً أو من قبل المشرف) — لا نكرر التسجيل
+  return res.json({
+    error: `أنت مسجَّل حضورك (${entry.checkIn}) وانصرافك (${entry.checkOut}) بالفعل لهذا اليوم`,
+    already: true, teacherName: teacher.name, checkIn: entry.checkIn, checkOut: entry.checkOut,
+  });
 });
 
 
@@ -3557,6 +3688,51 @@ ${body}
 <div class="footer">تاريخ الطباعة: ${hijriNow} — ${school}</div>
 </body></html>`;
 }
+
+// ── ورقة طباعة رمز QR لتسجيل حضور المعلمين ────────────────
+app.get('/api/print/checkin-qr', (req, res) => {
+  const db     = readDB();
+  const school = db.settings.schoolName || 'حضور الحلقات';
+  let token    = db.settings.checkinToken;
+  if (!token) { token = genCheckinToken(); saveDB(d => { d.settings.checkinToken = token; }); }
+  const { checkinUrl, scanUrl } = buildCheckinUrls(req, token);
+  const hijriNow = new Date().toLocaleDateString('ar-SA',{calendar:'islamic',year:'numeric',month:'long',day:'numeric'});
+
+  const html = `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="UTF-8">
+<title>رمز حضور المعلمين — ${school}</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;font-family:Arial,sans-serif}
+body{background:#fff;color:#111;padding:30px;max-width:620px;margin:auto;text-align:center}
+.school{font-size:22px;font-weight:800;color:#1D4ED8}
+.sub{font-size:15px;color:#374151;margin-top:6px;margin-bottom:22px}
+.qr-frame{display:inline-block;padding:18px;border:3px solid #1D4ED8;border-radius:16px;margin:10px 0}
+.instructions{margin-top:22px;font-size:14px;color:#374151;line-height:2;text-align:right;background:#f8fafc;border-radius:10px;padding:16px 20px}
+.instructions b{color:#1D4ED8}
+.link{font-size:11px;color:#94a3b8;margin-top:16px;word-break:break-all;font-family:monospace}
+.footer{font-size:10px;color:#94a3b8;text-align:center;margin-top:20px;border-top:1px solid #e2e8f0;padding-top:8px}
+.no-print{margin-bottom:16px;padding:9px 22px;background:#1D4ED8;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px}
+@page{size:A4 portrait;margin:14mm}
+@media print{.no-print{display:none}}
+</style></head><body>
+<button class="no-print" onclick="window.print()">🖨 طباعة</button>
+<div class="school">${school}</div>
+<div class="sub">امسح الرمز لتسجيل حضورك أو انصرافك</div>
+<div class="qr-frame"><div id="qr"></div></div>
+<div class="instructions">
+  <div>١. افتح كاميرا الجوال ووجّهها نحو الرمز.</div>
+  <div>٢. إن لم تفتح الكاميرا الرابط تلقائياً، افتح <b>${scanUrl}</b> من المتصفح لمسح الرمز.</div>
+  <div>٣. أدخل رقمك السري المكوّن من ٤ أرقام واضغط تسجيل.</div>
+</div>
+<div class="link">${checkinUrl}</div>
+<div class="footer">تاريخ الطباعة: ${hijriNow} — ${school}</div>
+<script>
+new QRCode(document.getElementById('qr'), { text: ${JSON.stringify(checkinUrl)}, width: 260, height: 260, correctLevel: QRCode.CorrectLevel.M });
+</script>
+</body></html>`;
+  res.setHeader('Content-Type','text/html; charset=utf-8');
+  res.send(html);
+});
 
 // ── كشف الحضور اليومي (طلاب) ──────────────────────────
 app.get('/api/print/daily-attendance/:date', (req, res) => {
