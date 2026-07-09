@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>مسح رمز الحضور</title>
+<link rel="stylesheet" href="/styles.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsqr/1.4.0/jsQR.js"></script>
+<style>
+  html,body{height:100%}
+  body{
+    margin:0; background:#0b0f19; color:#fff; font-family:inherit;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    min-height:100%; padding:20px;
+  }
+  .sc-title{font-size:17px; font-weight:800; margin-bottom:4px}
+  .sc-sub{font-size:13px; color:#9CA3AF; margin-bottom:18px; text-align:center; max-width:340px}
+  .sc-frame{
+    position:relative; width:min(88vw,340px); height:min(88vw,340px);
+    border-radius:18px; overflow:hidden; background:#000;
+    box-shadow:0 0 0 3px rgba(255,255,255,.15);
+  }
+  .sc-frame video{ width:100%; height:100%; object-fit:cover }
+  .sc-frame .corner{
+    position:absolute; width:34px; height:34px; border:3px solid var(--accent,#B45309);
+  }
+  .sc-frame .c-tl{ top:10px; left:10px; border-left:none; border-top:none; }
+  .sc-frame .c-tr{ top:10px; right:10px; border-right:none; border-top:none; }
+  .sc-frame .c-bl{ bottom:10px; left:10px; border-left:none; border-bottom:none; }
+  .sc-frame .c-br{ bottom:10px; right:10px; border-right:none; border-bottom:none; }
+  .sc-status{ margin-top:18px; font-size:13px; color:#9CA3AF; min-height:20px; text-align:center }
+  .sc-status.ok{ color:#4ADE80; font-weight:700 }
+  .sc-status.err{ color:#F87171; font-weight:700 }
+  .sc-manual{ margin-top:22px; font-size:12px; color:#6B7280; text-align:center }
+  .sc-manual a{ color:#93C5FD }
+  canvas{ display:none }
+</style>
+</head>
+<body>
+  <div class="sc-title">امسح رمز الحضور</div>
+  <div class="sc-sub">وجّه كاميرا الجهاز نحو رمز QR المعروض عند مدخل المدرسة</div>
+
+  <div class="sc-frame">
+    <video id="scVideo" playsinline muted></video>
+    <div class="corner c-tl"></div><div class="corner c-tr"></div>
+    <div class="corner c-bl"></div><div class="corner c-br"></div>
+  </div>
+
+  <div class="sc-status" id="scStatus">جارٍ تشغيل الكاميرا…</div>
+  <div class="sc-manual">لا تعمل الكاميرا؟ تأكد من السماح للمتصفح بالوصول إليها، أو اطلب الرابط مباشرة من الإدارة.</div>
+
+  <canvas id="scCanvas"></canvas>
+
+<script>
+  const video  = document.getElementById('scVideo');
+  const canvas = document.getElementById('scCanvas');
+  const ctx    = canvas.getContext('2d', { willReadFrequently: true });
+  const status = document.getElementById('scStatus');
+  let scanning = true;
+
+  async function startCamera() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment' }, audio: false,
+      });
+      video.srcObject = stream;
+      await video.play();
+      status.textContent = 'وجّه الكاميرا نحو الرمز…';
+      requestAnimationFrame(tick);
+    } catch (e) {
+      status.className = 'sc-status err';
+      status.textContent = 'تعذّر الوصول إلى الكاميرا. تأكد من السماح للمتصفح بذلك (يتطلب اتصال HTTPS).';
+    }
+  }
+
+  function tick() {
+    if (!scanning) return;
+    if (video.readyState === video.HAVE_ENOUGH_DATA) {
+      canvas.width  = video.videoWidth;
+      canvas.height = video.videoHeight;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'dontInvert' });
+      if (code && code.data) {
+        onCodeFound(code.data);
+        return;
+      }
+    }
+    requestAnimationFrame(tick);
+  }
+
+  function onCodeFound(text) {
+    scanning = false;
+    status.className = 'sc-status ok';
+    status.textContent = 'تم العثور على الرمز، جارٍ التحويل…';
+    (video.srcObject?.getTracks() || []).forEach(t => t.stop());
+    try {
+      const url = new URL(text, location.origin);
+      // للأمان: لا ننتقل إلا لرابط من نفس الموقع
+      if (url.origin === location.origin) {
+        location.href = url.href;
+        return;
+      }
+    } catch (e) { /* ليس رابطاً صالحاً */ }
+    // إن لم يكن رابطاً (مثلاً محتوى نصي)، اعرضه للمستخدم بدل التحويل التلقائي
+    status.className = 'sc-status err';
+    status.textContent = 'الرمز الممسوح غير صالح لهذا النظام.';
+    setTimeout(() => { scanning = true; requestAnimationFrame(tick); }, 1500);
+  }
+
+  startCamera();
+</script>
+</body>
+</html>
