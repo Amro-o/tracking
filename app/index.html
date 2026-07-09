@@ -115,6 +115,20 @@
 
 <div id="app" class="app hidden">
 
+  <!-- بوابة تسجيل الحضور — تمنع المعلم من استخدام حسابه قبل تسجيل حضوره -->
+  <div id="checkinGateOverlay" class="modal-overlay hidden" style="z-index:99999">
+    <div class="modal" style="max-width:380px;text-align:center;padding:34px 26px">
+      <div style="font-size:44px;margin-bottom:10px">⏰</div>
+      <h3 style="margin-bottom:8px">لم تسجل حضورك اليوم</h3>
+      <p style="color:var(--text2);font-size:14px;line-height:1.8;margin-bottom:24px">
+        يجب تسجيل حضورك أولاً قبل استخدام حسابك — يمكنك مسح رمز QR عند المدخل، أو تسجيل حضورك الآن مباشرة من هنا.
+      </p>
+      <button class="btn-primary" style="width:100%;padding:14px;font-size:15px" onclick="selfCheckinNow()">تسجيل الحضور الآن</button>
+      <button class="btn-secondary" style="width:100%;margin-top:10px;padding:12px" onclick="confirmLogout()">تسجيل الخروج</button>
+      <div id="checkinGateMsg" style="margin-top:14px;font-size:13px"></div>
+    </div>
+  </div>
+
   <header class="app-header">
     <div class="menu-btn-wrap">
       <button class="btn-icon menu-btn" onclick="toggleSidebar()">
@@ -138,6 +152,7 @@
     <div class="header-right">
       <span class="app-header-title" id="headerTitle">الرئيسية</span>
       <span id="headerRoleBadge" class="header-role-badge hidden"></span>
+      <span id="checkinReminderBadge" class="header-role-badge hidden" style="background:var(--warn,#92400E);cursor:pointer" onclick="selfCheckinNow()" title="اضغط لتسجيل حضورك الآن">⏰ لم تسجل حضورك</span>
       <!-- Lock button -->
       <button class="btn-icon header-lock-btn" onclick="lockApp()" aria-label="قفل التطبيق" title="قفل التطبيق">
         <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
@@ -2506,6 +2521,16 @@
           الحلقات المُسندة
         </label>
         <div id="accClassesList" class="acc-cls-list"></div>
+      </div>
+
+      <!-- Link to a teacher attendance profile (teacher/moderator) -->
+      <div id="accTeacherLinkRow" class="acc-field" style="display:none;margin-top:14px">
+        <label class="acc-field-label">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          ربط بملف الحضور (لتتبع تسجيل الحضور اليومي)
+        </label>
+        <select id="accTeacherLink" class="acc-input"></select>
+        <span class="acc-field-hint">هذا الربط يجعل النظام يطلب من هذا الحساب تسجيل حضوره عند الدخول</span>
       </div>
     </div>
 
