@@ -271,6 +271,7 @@ function accPickRole(role) {
   document.querySelectorAll('.acc-role-card').forEach(c =>
     c.classList.toggle('acc-role-card--active', c.dataset.role === role));
   document.getElementById('accClassesRow').style.display = role === 'teacher' ? '' : 'none';
+  document.getElementById('accTeacherLinkRow').style.display = (role === 'teacher' || role === 'moderator') ? '' : 'none';
 }
 
 function accTogglePw(btn) {
@@ -295,6 +296,9 @@ function openAccountModal(id) {
   document.getElementById('accUsername').value = acc?.username || '';
   document.getElementById('accPassword').value = '';
   document.getElementById('accClassesList').innerHTML = classOptions || '<span style="font-size:13px;color:var(--text2)">لا توجد حلقات مسجلة</span>';
+  const teacherOptions = ['<option value="">— بدون ربط —</option>']
+    .concat((state.teachers||[]).map(t => `<option value="${t.id}" ${acc?.teacherId===t.id?'selected':''}>${t.name || 'بدون اسم'}</option>`));
+  document.getElementById('accTeacherLink').innerHTML = teacherOptions.join('');
   accPickRole(acc?.role || 'teacher');
 }
 
@@ -305,11 +309,12 @@ async function saveAccount() {
   const password  = document.getElementById('accPassword').value;
   const role      = document.getElementById('accRole').value;
   const assigned  = [...document.querySelectorAll('#accClassesList input:checked')].map(i => i.value);
+  const teacherId = document.getElementById('accTeacherLink').value || null;
 
   if (!name || !username) { toast('<span data-toast="err">⚠️</span> الاسم واسم المستخدم مطلوبان'); return; }
   if (!id && !password)   { toast('<span data-toast="err">⚠️</span> كلمة المرور مطلوبة لحساب جديد'); return; }
 
-  const body = { name, username, role, assignedClasses: assigned };
+  const body = { name, username, role, assignedClasses: assigned, teacherId };
   if (password) body.password = password;
 
   const url    = id ? `${API}/accounts/${id}` : `${API}/accounts`;
