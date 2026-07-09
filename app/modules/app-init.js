@@ -409,6 +409,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     await loadAll(); await loadAndDisplayLogos(); navigate(targetPage);
     refreshNotifBadge();
     waUpdateNavBadge();
+    checkTeacherCheckinGate();
     return;
   }
 
