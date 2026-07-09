@@ -179,7 +179,7 @@ async function navigate(page) {
     case 'quran':      initQuranPage();     break;
     case 'classes':    renderClassList();   break;
     case 'teachers':   renderTeacherList(); break;
-    case 'checkin':    renderCheckinList(); loadTeacherSummary(); break;
+    case 'checkin':    renderCheckinList(); loadTeacherSummary(); loadAutoCheckoutSettings(); break;
     case 'holidays':   renderHolidayList(); break;
     case 'reports':    initReports();       break;
     case 'settings':   initSettings();      break;
