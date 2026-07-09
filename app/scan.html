@@ -16,7 +16,7 @@
   .sc-title{font-size:17px; font-weight:800; margin-bottom:4px}
   .sc-sub{font-size:13px; color:#9CA3AF; margin-bottom:18px; text-align:center; max-width:340px}
   #reader{
-    width:min(88vw,340px); border-radius:18px; overflow:hidden;
+    width:min(92vw,380px); border-radius:18px; overflow:hidden;
     box-shadow:0 0 0 3px rgba(255,255,255,.15);
   }
   #reader video{ border-radius:18px }
@@ -71,10 +71,22 @@
     status.className = 'sc-status err';
     status.textContent = 'تعذّر تحميل مكتبة قراءة الرمز (تحقق من اتصال الإنترنت) — أعد تحميل الصفحة.';
   } else {
-    html5QrCode = new Html5Qrcode('reader');
+    html5QrCode = new Html5Qrcode('reader', {
+      // استخدام كاشف المتصفح الأصلي (أسرع وأدق) إن كان مدعوماً، مع رجوع تلقائي لمكتبة JS
+      useBarCodeDetectorIfSupported: true,
+      formatsToSupport: [ Html5QrcodeSupportedFormats.QR_CODE ],
+    });
     html5QrCode.start(
-      { facingMode: 'environment' },
-      { fps: 10, qrbox: { width: 250, height: 250 } },
+      // طلب دقة كاميرا أعلى يسمح بمسح الرمز من مسافة أبعد
+      { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
+      {
+        fps: 15,
+        // مربع مسح أكبر (نسبي لحجم إطار الفيديو) بدل حجم ثابت صغير يجبر الاقتراب كثيراً
+        qrbox: (viewfinderWidth, viewfinderHeight) => {
+          const edge = Math.floor(Math.min(viewfinderWidth, viewfinderHeight) * 0.85);
+          return { width: edge, height: edge };
+        },
+      },
       onScanSuccess,
       onScanFailure
     ).then(() => {
