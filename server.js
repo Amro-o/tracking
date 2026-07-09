@@ -867,7 +867,7 @@ app.post('/api/auth/verify', (req, res) => {
     const valid = String(pin) === String(db.settings.pin || '1234');
     if (valid) {
       const admin = db.accounts.find(a => a.role === 'admin') || { id:'admin', name:'المدير', role:'admin', assignedClasses:[] };
-      return res.json({ valid: true, role:'admin', userId: admin.id, name: admin.name, assignedClasses: [] });
+      return res.json({ valid: true, role:'admin', userId: admin.id, name: admin.name, assignedClasses: [], teacherId: admin.teacherId || null });
     }
     return res.json({ valid: false });
   }
@@ -879,7 +879,7 @@ app.post('/api/auth/verify', (req, res) => {
   );
   console.log('[auth] result:', user ? 'FOUND' : 'NOT FOUND');
   if (user) {
-    return res.json({ valid: true, role: user.role, userId: user.id, name: user.name, assignedClasses: user.assignedClasses || [] });
+    return res.json({ valid: true, role: user.role, userId: user.id, name: user.name, assignedClasses: user.assignedClasses || [], teacherId: user.teacherId || null });
   }
   res.json({ valid: false });
 });
@@ -979,11 +979,11 @@ app.get('/api/accounts', (req, res) => {
 });
 
 app.post('/api/accounts', (req, res) => {
-  const { name, username, password, role, assignedClasses } = req.body;
+  const { name, username, password, role, assignedClasses, teacherId } = req.body;
   if (!name || !username || !password || !role) return res.status(400).json({ error: 'بيانات ناقصة' });
   const db = readDB();
   if (db.accounts.find(a => a.username === username)) return res.status(400).json({ error: 'اسم المستخدم مستخدم بالفعل' });
-  const account = { id: newId(), name, username, password, role, assignedClasses: assignedClasses || [] };
+  const account = { id: newId(), name, username, password, role, assignedClasses: assignedClasses || [], teacherId: teacherId || null };
   db.accounts.push(account);
   writeDB(db);
   res.json({ id: account.id });
@@ -993,7 +993,7 @@ app.put('/api/accounts/:id', (req, res) => {
   const db = readDB();
   const i = db.accounts.findIndex(a => a.id === req.params.id);
   if (i < 0) return res.status(404).json({ error: 'الحساب غير موجود' });
-  const { name, username, password, role, assignedClasses } = req.body;
+  const { name, username, password, role, assignedClasses, teacherId } = req.body;
   // Check username uniqueness
   if (username && db.accounts.some((a, idx) => a.username === username && idx !== i))
     return res.status(400).json({ error: 'اسم المستخدم مستخدم بالفعل' });
@@ -1004,6 +1004,7 @@ app.put('/api/accounts/:id', (req, res) => {
     ...(password && { password }),
     ...(role && { role }),
     ...(assignedClasses !== undefined && { assignedClasses }),
+    ...(teacherId !== undefined && { teacherId: teacherId || null }),
   };
   writeDB(db);
   res.json({ ok: true });
@@ -1494,6 +1495,25 @@ app.delete('/api/teacher-log/:id', (req, res) => {
   if (db.teacherLog.length === before) return res.json({error:'لم يتم العثور على السجل'});
   writeDB(db);
   res.json({ok:true});
+});
+
+// ── تسجيل حضور ذاتي من داخل التطبيق (بعد تسجيل الدخول بالحساب — لا يحتاج رقم سري) ──
+app.post('/api/teacher-log/self-checkin', (req, res) => {
+  const { teacherId } = req.body;
+  const db = readDB();
+  const teacher = db.teachers.find(t => t.id === teacherId);
+  if (!teacher) return res.json({ error: 'لم يتم ربط هذا الحساب بملف معلم بعد. يرجى مراجعة الإدارة.' });
+
+  const today = nowDate();
+  const time  = nowTime();
+  let entry = db.teacherLog.find(l => l.teacherId === teacherId && l.date === today);
+  if (entry && entry.checkIn) {
+    return res.json({ error: `تم تسجيل حضورك بالفعل الساعة ${entry.checkIn}`, already:true, checkIn:entry.checkIn });
+  }
+  if (!entry) { entry = { id:newId(), teacherId, date:today, checkIn:time, checkOut:null }; db.teacherLog.push(entry); }
+  else { entry.checkIn = time; }
+  writeDB(db);
+  res.json({ ok:true, time });
 });
 
 // ── رمز QR لتسجيل الحضور الذاتي (المدير/المشرف فقط من الواجهة) ──
