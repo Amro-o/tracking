@@ -3747,6 +3747,7 @@ ${body}
 app.get('/api/print/checkin-qr', (req, res) => {
   const db     = readDB();
   const school = db.settings.schoolName || 'حضور الحلقات';
+  const logo   = (db.settings.logos||[])[0]?.url || '';
   let token    = db.settings.checkinToken;
   if (!token) { token = genCheckinToken(); saveDB(d => { d.settings.checkinToken = token; }); }
   const { checkinUrl, scanUrl } = buildCheckinUrls(req, token);
@@ -3754,34 +3755,105 @@ app.get('/api/print/checkin-qr', (req, res) => {
 
   const html = `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="UTF-8">
 <title>رمز حضور المعلمين — ${school}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <style>
-*{box-sizing:border-box;margin:0;padding:0;font-family:Arial,sans-serif}
-body{background:#fff;color:#111;padding:30px;max-width:620px;margin:auto;text-align:center}
-.school{font-size:22px;font-weight:800;color:#1D4ED8}
-.sub{font-size:15px;color:#374151;margin-top:6px;margin-bottom:22px}
-.qr-frame{display:inline-block;padding:18px;border:3px solid #1D4ED8;border-radius:16px;margin:10px 0}
-.instructions{margin-top:22px;font-size:14px;color:#374151;line-height:2;text-align:right;background:#f8fafc;border-radius:10px;padding:16px 20px}
-.instructions b{color:#1D4ED8}
-.link{font-size:11px;color:#94a3b8;margin-top:16px;word-break:break-all;font-family:monospace}
-.footer{font-size:10px;color:#94a3b8;text-align:center;margin-top:20px;border-top:1px solid #e2e8f0;padding-top:8px}
-.no-print{margin-bottom:16px;padding:9px 22px;background:#1D4ED8;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px}
-@page{size:A4 portrait;margin:14mm}
-@media print{.no-print{display:none}}
+  :root{ --navy:#1E3A5F; --navy-d:#152B47; --gold:#B45309; --paper:#FDFCFA; }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{background:#e9edf3}
+  body{
+    font-family:'Tajawal',Arial,sans-serif; color:#1f2937;
+    display:flex; justify-content:center; padding:26px 14px;
+  }
+  .sheet{
+    width:100%; max-width:520px; background:var(--paper);
+    border-radius:22px; overflow:hidden; box-shadow:0 18px 50px rgba(20,30,60,.18);
+    position:relative;
+  }
+  .band{
+    background:linear-gradient(135deg,var(--navy),var(--navy-d));
+    padding:26px 28px 34px; color:#fff; position:relative; text-align:center;
+    overflow:hidden;
+  }
+  .band::after{
+    content:''; position:absolute; inset:auto -30% -60% -30%; height:140px;
+    background:var(--gold); opacity:.14; border-radius:50%;
+  }
+  .band-logo{ width:52px; height:52px; border-radius:12px; object-fit:cover; margin:0 auto 10px; display:block; box-shadow:0 4px 14px rgba(0,0,0,.25) }
+  .band-school{ font-size:21px; font-weight:800; position:relative }
+  .band-sub{ font-size:12.5px; opacity:.85; margin-top:4px; position:relative; letter-spacing:.3px }
+  .card{ padding:0 28px 30px; margin-top:-20px; position:relative }
+  .qr-plate{
+    background:#fff; border-radius:18px; padding:22px; margin:0 auto;
+    width:fit-content; box-shadow:0 10px 30px rgba(20,30,60,.12);
+    border:1px solid #eef1f6;
+  }
+  .qr-plate .corner{ position:relative }
+  .qr-caption{
+    text-align:center; font-size:13px; font-weight:700; color:var(--navy);
+    margin-top:16px; letter-spacing:.2px;
+  }
+  .divider{ display:flex; align-items:center; gap:10px; margin:22px 0 16px; color:#9aa4b5; font-size:11px; }
+  .divider::before,.divider::after{ content:''; flex:1; height:1px; background:#e5e9f0 }
+  .steps{ display:flex; flex-direction:column; gap:12px }
+  .step{ display:flex; align-items:flex-start; gap:12px; text-align:right }
+  .step-num{
+    flex:none; width:26px; height:26px; border-radius:50%; background:var(--navy);
+    color:#fff; font-size:12px; font-weight:800; display:flex; align-items:center; justify-content:center;
+  }
+  .step p{ font-size:13px; color:#374151; line-height:1.6; padding-top:3px }
+  .step b{ color:var(--gold) }
+  .altlink{
+    margin-top:18px; background:#f4f6fa; border-radius:10px; padding:10px 14px;
+    font-size:10.5px; color:#8b93a3; word-break:break-all; text-align:center; font-family:monospace;
+  }
+  .footer{
+    text-align:center; font-size:10px; color:#9aa4b5; padding:14px 20px 22px;
+    border-top:1px dashed #e5e9f0; margin:0 28px;
+  }
+  .no-print{
+    display:block; margin:0 auto 18px; padding:10px 26px; background:var(--gold); color:#fff;
+    border:none; border-radius:8px; cursor:pointer; font-size:13px; font-weight:700;
+    font-family:inherit; box-shadow:0 6px 16px rgba(180,83,9,.3);
+  }
+  @page{ size:A4 portrait; margin:12mm }
+  @media print{
+    body{ background:#fff; padding:0 }
+    .no-print{ display:none }
+    .sheet{ box-shadow:none; border-radius:0; max-width:100% }
+  }
 </style></head><body>
-<button class="no-print" onclick="window.print()">🖨 طباعة</button>
-<div class="school">${school}</div>
-<div class="sub">امسح الرمز لتسجيل حضورك أو انصرافك</div>
-<div class="qr-frame"><div id="qr"></div></div>
-<div class="instructions">
-  <div>١. افتح كاميرا الجوال ووجّهها نحو الرمز.</div>
-  <div>٢. إن لم تفتح الكاميرا الرابط تلقائياً، افتح <b>${scanUrl}</b> من المتصفح لمسح الرمز.</div>
-  <div>٣. أدخل رقمك السري المكوّن من ٤ أرقام واضغط تسجيل.</div>
+<div style="width:100%;max-width:520px">
+  <button class="no-print" onclick="window.print()">🖨 طباعة</button>
+  <div class="sheet">
+    <div class="band">
+      ${logo ? `<img class="band-logo" src="${logo}" alt="${school}" />` : ''}
+      <div class="band-school">${school}</div>
+      <div class="band-sub">تسجيل الحضور والانصراف الذاتي للمعلمين</div>
+    </div>
+    <div class="card">
+      <div class="qr-plate"><div id="qr"></div></div>
+      <div class="qr-caption">📷 امسح الرمز بكاميرا جوالك</div>
+
+      <div class="divider">خطوات التسجيل</div>
+      <div class="steps">
+        <div class="step"><div class="step-num">١</div><p>وجّه كاميرا الجوال نحو الرمز — سيفتح المتصفح تلقائياً.</p></div>
+        <div class="step"><div class="step-num">٢</div><p>إن لم تفتح الكاميرا الرابط، افتح <b>${scanUrl}</b> من متصفح الجوال لمسح الرمز.</p></div>
+        <div class="step"><div class="step-num">٣</div><p>أدخل رقمك السري المكوّن من <b>٤ أرقام</b> — يسجَّل حضورك أو انصرافك تلقائياً.</p></div>
+      </div>
+
+      <div class="altlink">${checkinUrl}</div>
+    </div>
+    <div class="footer">${school} · تاريخ الطباعة: ${hijriNow}</div>
+  </div>
 </div>
-<div class="link">${checkinUrl}</div>
-<div class="footer">تاريخ الطباعة: ${hijriNow} — ${school}</div>
 <script>
-new QRCode(document.getElementById('qr'), { text: ${JSON.stringify(checkinUrl)}, width: 260, height: 260, correctLevel: QRCode.CorrectLevel.M });
+new QRCode(document.getElementById('qr'), {
+  text: ${JSON.stringify(checkinUrl)}, width: 240, height: 240,
+  colorDark: '#1E3A5F', colorLight: '#ffffff',
+  correctLevel: QRCode.CorrectLevel.M,
+});
 </script>
 </body></html>`;
   res.setHeader('Content-Type','text/html; charset=utf-8');
