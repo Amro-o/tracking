@@ -43,48 +43,161 @@
   <div class="sc-manual">لا تعمل الكاميرا؟ تأكد من السماح للمتصفح بالوصول إليها (يتطلب اتصال HTTPS)، أو اطلب الرابط مباشرة من الإدارة.</div>
 
 <script>
-  const status = document.getElementById('scStatus');
-  let redirected = false;
+const status = document.getElementById("scStatus");
+let redirected = false;
+let stream;
 
-  function onScanSuccess(decodedText) {
+function handleResult(decodedText) {
     if (redirected) return;
+
     try {
-      const url = new URL(decodedText, location.origin);
-      if (url.origin === location.origin) {
-        redirected = true;
-        status.className = 'sc-status ok';
-        status.textContent = 'تم العثور على الرمز، جارٍ التحويل…';
-        html5QrCode.stop().catch(()=>{}).finally(() => { location.href = url.href; });
-        return;
-      }
-    } catch (e) { /* ليس رابطاً صالحاً */ }
-    status.className = 'sc-status err';
-    status.textContent = 'الرمز الممسوح غير صالح لهذا النظام.';
-  }
+        const url = new URL(decodedText, location.origin);
 
-  function onScanFailure() {
-    // تُستدعى في كل إطار لا يحتوي رمزاً — تجاهلها، هذا طبيعي أثناء البحث عن الرمز
-  }
+        if (url.origin === location.origin) {
+            redirected = true;
 
-  let html5QrCode;
-  if (typeof Html5Qrcode === 'undefined') {
-    status.className = 'sc-status err';
-    status.textContent = 'تعذّر تحميل مكتبة قراءة الرمز (تحقق من اتصال الإنترنت) — أعد تحميل الصفحة.';
-  } else {
-    html5QrCode = new Html5Qrcode('reader');
-    html5QrCode.start(
-      { facingMode: 'environment' },
-      { fps: 10, qrbox: { width: 250, height: 250 } },
-      onScanSuccess,
-      onScanFailure
-    ).then(() => {
-      status.textContent = 'وجّه الكاميرا نحو الرمز…';
-    }).catch(err => {
-      status.className = 'sc-status err';
-      status.textContent = 'تعذّر الوصول إلى الكاميرا. تأكد من السماح للمتصفح بذلك.';
-      console.error('camera start error:', err);
+            status.className = "sc-status ok";
+            status.textContent = "تم العثور على الرمز، جارٍ التحويل…";
+
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+            }
+
+            location.href = url.href;
+            return;
+        }
+    } catch {}
+
+    status.className = "sc-status err";
+    status.textContent = "الرمز غير صالح.";
+}
+
+async function startNativeScanner() {
+
+    stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+            facingMode: { ideal: "environment" },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
+        }
     });
-  }
+
+    const video = document.createElement("video");
+    video.setAttribute("playsinline", true);
+    video.autoplay = true;
+    video.srcObject = stream;
+
+    document.getElementById("reader").appendChild(video);
+
+    await video.play();
+
+    const track = stream.getVideoTracks()[0];
+
+    try {
+        await track.applyConstraints({
+            advanced: [
+                { focusMode: "continuous" }
+            ]
+        });
+    } catch {}
+
+    const detector = new BarcodeDetector({
+        formats: ["qr_code"]
+    });
+
+    status.textContent = "وجّه الكاميرا نحو الرمز…";
+
+    async function scan() {
+
+        if (redirected) return;
+
+        try {
+            const codes = await detector.detect(video);
+
+            if (codes.length) {
+                handleResult(codes[0].rawValue);
+                return;
+            }
+        } catch {}
+
+        requestAnimationFrame(scan);
+    }
+
+    scan();
+}
+
+async function startFallback() {
+
+    const html5QrCode = new Html5Qrcode("reader");
+
+    html5QrCode.start(
+        {
+            facingMode: "environment",
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
+        },
+        {
+            fps: 30,
+            disableFlip: true,
+            qrbox: (w, h) => {
+                const s = Math.min(w, h) * 0.9;
+                return {
+                    width: s,
+                    height: s
+                };
+            }
+        },
+        text => {
+            html5QrCode.stop().catch(()=>{});
+            handleResult(text);
+        }
+    ).then(() => {
+
+        status.textContent = "وجّه الكاميرا نحو الرمز…";
+
+        const track = html5QrCode.getRunningTrack?.();
+
+        if (track) {
+            track.applyConstraints({
+                advanced: [
+                    { focusMode: "continuous" }
+                ]
+            }).catch(()=>{});
+        }
+
+    }).catch(err => {
+
+        console.error(err);
+
+        status.className = "sc-status err";
+        status.textContent = "تعذر تشغيل الكاميرا.";
+
+    });
+
+}
+
+(async () => {
+
+    if ("BarcodeDetector" in window) {
+
+        try {
+            await startNativeScanner();
+            return;
+        } catch (e) {
+            console.log("Native scanner failed, using fallback.");
+        }
+
+    }
+
+    if (typeof Html5Qrcode !== "undefined") {
+        startFallback();
+        return;
+    }
+
+    status.className = "sc-status err";
+    status.textContent = "تعذر تحميل مكتبة المسح.";
+
+})();
 </script>
 </body>
 </html>
