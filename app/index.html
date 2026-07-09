@@ -200,8 +200,8 @@
       <a class="nav-item" data-page="admissions" onclick="navigate('admissions')"><span class="nav-icon"><i data-lucide="user-plus"></i></span> طلبات القبول <span id="admNavBadge" class="wa-nav-badge hidden"></span></a>
       <a class="nav-item" data-page="quran" onclick="navigate('quran')"><span class="nav-icon"><i data-lucide="book-open"></i></span> تقدم القرآن</a>
       <a class="nav-item" data-page="classes" onclick="navigate('classes')"><span class="nav-icon"><i data-lucide="school"></i></span> الحلقات</a>
-      <a class="nav-item" data-page="teachers" onclick="navigate('teachers')"><span class="nav-icon"><i data-lucide="graduation-cap"></i></span> المعلمون</a>
-      <a class="nav-item" data-page="checkin" onclick="navigate('checkin')"><span class="nav-icon"><i data-lucide="clock"></i></span> حضور المعلمين</a>
+      <a class="nav-item" data-page="teachers" onclick="navigate('teachers')"><span class="nav-icon"><i data-lucide="graduation-cap"></i></span> المعلمون والمشرفون</a>
+      <a class="nav-item" data-page="checkin" onclick="navigate('checkin')"><span class="nav-icon"><i data-lucide="clock"></i></span> حضور المعلمين والمشرفين</a>
       <a class="nav-item" data-page="holidays" onclick="navigate('holidays')"><span class="nav-icon"><i data-lucide="sun"></i></span> الإجازات</a>
       <a class="nav-item" data-page="calendar" onclick="navigate('calendar')"><span class="nav-icon"><i data-lucide="calendar-days"></i></span> التقويم</a>
       <a class="nav-item" data-page="reports" onclick="navigate('reports')"><span class="nav-icon"><i data-lucide="bar-chart-2"></i></span> التقارير</a>
@@ -952,17 +952,17 @@
     <div class="page hidden" id="page-teachers" style="position:relative">
       <!-- Skeleton -->
       <div class="page-head">
-        <h2>المعلمون</h2>
-        <button class="btn-primary" onclick="openTeacherModal()">+ إضافة معلم</button>
+        <h2>المعلمون والمشرفون</h2>
+        <button class="btn-primary" onclick="openTeacherModal()">+ إضافة معلم/مشرف</button>
       </div>
       <div class="card-list" id="teacherList"></div>
     </div>
 
-    <!-- حضور المعلمين -->
+    <!-- حضور المعلمين والمشرفين -->
     <div class="page hidden" id="page-checkin" style="position:relative">
       <!-- Skeleton -->
       <div class="page-head">
-        <h2>حضور المعلمين</h2>
+        <h2>حضور المعلمين والمشرفين</h2>
         <p class="page-sub">مكتب الإدارة  </p>
       </div>
       <div class="checkin-clock">
@@ -1736,7 +1736,7 @@
       <span><i data-lucide="users"></i></span><span>الطلاب</span>
     </button>
     <button class="bnav-item" data-page="checkin" onclick="navigate('checkin')">
-      <span><i data-lucide="clock"></i></span><span>حضور المعلم</span>
+      <span><i data-lucide="clock"></i></span><span>الحضور</span>
     </button>
     <button class="bnav-item" data-page="reports" onclick="navigate('reports')">
       <span><i data-lucide="bar-chart-2"></i></span><span>التقارير</span>
@@ -2523,11 +2523,11 @@
         <div id="accClassesList" class="acc-cls-list"></div>
       </div>
 
-      <!-- Link to a teacher attendance profile (teacher/moderator) -->
+      <!-- Link to a teacher attendance profile (teachers, moderators, admins) -->
       <div id="accTeacherLinkRow" class="acc-field" style="display:none;margin-top:14px">
         <label class="acc-field-label">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-          ربط بملف الحضور (لتتبع تسجيل الحضور اليومي)
+          ربط بملف الحضور (للمعلمين والمشرفين والمديرين)
         </label>
         <select id="accTeacherLink" class="acc-input"></select>
         <span class="acc-field-hint">هذا الربط يجعل النظام يطلب من هذا الحساب تسجيل حضوره عند الدخول</span>
