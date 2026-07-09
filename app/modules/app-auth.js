@@ -12,6 +12,7 @@ let currentRole            = 'admin';
 let currentUserId          = '';
 let currentUserName        = '';
 let currentAssignedClasses = [];
+let currentTeacherId       = null; // ملف المعلم المرتبط بهذا الحساب (لتتبع تسجيل الحضور)
 
 const AUTH_KEY       = 'halaqat_auth_v2';
 const SAVED_USER_KEY = 'halaqat_saved_user'; // persists through lock — only cleared on logout
@@ -22,10 +23,11 @@ function _saveSession(data) {
   currentUserId          = data.userId          || '';
   currentUserName        = data.name            || data.username || '';
   currentAssignedClasses = data.assignedClasses || [];
+  currentTeacherId       = data.teacherId       || null;
   const payload = JSON.stringify({
     role: currentRole, userId: currentUserId,
     name: currentUserName, assignedClasses: currentAssignedClasses,
-    username: data.username || ''
+    username: data.username || '', teacherId: currentTeacherId,
   });
   // sessionStorage: survives Ctrl+R but clears on tab close
   sessionStorage.setItem(AUTH_KEY, payload);
@@ -43,6 +45,7 @@ function _loadSession() {
     if (!s || !s.role) return false;
     currentRole = s.role; currentUserId = s.userId || '';
     currentUserName = s.name || ''; currentAssignedClasses = s.assignedClasses || [];
+    currentTeacherId = s.teacherId || null;
     return true;
   } catch(e) { return false; }
 }
@@ -105,6 +108,54 @@ function visibleStudents() {
   if (currentRole !== 'teacher') return state.students;
   const ids = new Set(currentAssignedClasses);
   return state.students.filter(s => ids.has(s.classId));
+}
+
+// ── بوابة تسجيل الحضور ────────────────────────────────
+// المعلمون: تُقفل الواجهة بالكامل حتى يسجلوا حضورهم.
+// المدير/المشرف: لا تقييد، فقط شارة تذكير غير مانعة.
+function checkTeacherCheckinGate() {
+  const overlay = document.getElementById('checkinGateOverlay');
+  const badge   = document.getElementById('checkinReminderBadge');
+
+  // لا يوجد ربط بملف معلم لهذا الحساب — لا شيء لعرضه
+  if (!currentTeacherId) {
+    overlay?.classList.add('hidden');
+    badge?.classList.add('hidden');
+    return;
+  }
+
+  const log = (state.teacherLog || []).find(l => l.teacherId === currentTeacherId);
+  const checkedIn = !!(log && log.checkIn);
+
+  if (currentRole === 'teacher') {
+    badge?.classList.add('hidden'); // teachers don't get the header badge at all
+    overlay?.classList.toggle('hidden', checkedIn);
+  } else {
+    overlay?.classList.add('hidden'); // admin/moderator are never blocked
+    badge?.classList.toggle('hidden', checkedIn);
+  }
+}
+
+async function selfCheckinNow() {
+  const msgEl = document.getElementById('checkinGateMsg');
+  if (!currentTeacherId) return;
+  const res = await apiFetch('/teacher-log/self-checkin', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ teacherId: currentTeacherId }),
+  });
+  if (res?.error) {
+    if (msgEl) { msgEl.style.color = 'var(--warn)'; msgEl.textContent = res.error; }
+    if (res.already) {
+      // كان مسجَّلاً بالفعل (ربما من جهاز آخر) — فقط أعد فحص البوابة لإخفائها
+      await loadAll();
+      checkTeacherCheckinGate();
+      toast('أنت مسجَّل حضورك بالفعل الساعة ' + res.checkIn);
+    }
+    return;
+  }
+  await loadAll();
+  checkTeacherCheckinGate();
+  toast('<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-left:3px;flex-shrink:0"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> تم تسجيل حضورك الساعة ' + res.time);
 }
 
 function applyRoleUI() {
@@ -228,6 +279,7 @@ async function pinSubmit(overridePin) {
       await loadAll(); await loadAndDisplayLogos(); navigate(_savedPage);
       refreshNotifBadge();
       waUpdateNavBadge();
+      checkTeacherCheckinGate();
       bioOfferEnroll(password);
       // Real-time WA badge via SSE — admin/moderator only
       if (currentRole !== 'teacher') {
