@@ -271,7 +271,7 @@ function accPickRole(role) {
   document.querySelectorAll('.acc-role-card').forEach(c =>
     c.classList.toggle('acc-role-card--active', c.dataset.role === role));
   document.getElementById('accClassesRow').style.display = role === 'teacher' ? '' : 'none';
-  document.getElementById('accTeacherLinkRow').style.display = (role === 'teacher' || role === 'moderator') ? '' : 'none';
+  document.getElementById('accTeacherLinkRow').style.display = '';
 }
 
 function accTogglePw(btn) {
