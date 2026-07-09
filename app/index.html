@@ -964,6 +964,22 @@
         </div>
         <button class="btn-primary" style="font-size:13px;padding:9px 16px;white-space:nowrap" onclick="openQrTokenModal()">إدارة رمز QR</button>
       </div>
+      <div class="card form-card" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px">
+        <div>
+          <h3 class="section-title" style="margin-bottom:2px">
+            <span class="ui-ic ic-amber" style="vertical-align:middle;margin-inline-end:6px"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span>
+            الانصراف التلقائي
+          </h3>
+          <p class="page-sub" style="margin:0">يسجّل انصراف كل من نسي تسجيله في وقت محدد كل يوم</p>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
+            <input type="checkbox" id="autoCheckoutEnabled" onchange="saveAutoCheckoutSettings()" />
+            مفعّل
+          </label>
+          <input type="time" id="autoCheckoutTime" onchange="saveAutoCheckoutSettings()" style="width:120px" />
+        </div>
+      </div>
       <div class="search-bar">
         <input type="text" id="checkinSearch" placeholder="🔍 بحث عن معلم…" oninput="renderCheckinList()" />
       </div>
