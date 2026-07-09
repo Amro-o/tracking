@@ -94,7 +94,7 @@ function renderTeacherList() {
       ${avatarHtml}
       <div class="list-card-body">
         <div class="list-card-name">${t.name}</div>
-        <div class="list-card-sub">${t.subject||'معلم'} ${t.teacherId ? '· #'+t.teacherId : ''}</div>
+        <div class="list-card-sub">${t.subject||'معلم'} ${t.teacherId ? '· #'+t.teacherId : ''}${t.attendancePin ? ` · 🔑 ${t.attendancePin}` : ' · <span style="color:var(--warn)">لا يوجد رقم سري QR</span>'}</div>
         <div style="margin-top:4px">
           <span class="checkin-status ${statusClass}">${statusLabel}</span>
           ${log && log.checkIn ? `<span style="font-size:11px;color:var(--text2);margin-right:6px;font-family:var(--mono)">${log.checkIn}${log.checkOut?' — '+log.checkOut:''}</span>` : ''}
@@ -117,6 +117,7 @@ function openTeacherModal(id=null) {
     document.getElementById('fTeacherName').value    = t.name;
     document.getElementById('fTeacherSubject').value = t.subject||'';
     document.getElementById('fTeacherPhone').value   = t.phone||'';
+    document.getElementById('fTeacherPin').value     = t.attendancePin||'';
     const prev = document.getElementById('fTeacherPhotoPreview');
     const placeholder = document.getElementById('fTeacherPhotoPlaceholder');
     if (t.photo) {
@@ -128,7 +129,7 @@ function openTeacherModal(id=null) {
     }
   } else {
     document.getElementById('teacherModalTitle').textContent = 'إضافة معلم';
-    ['teacherId','fTeacherId','fTeacherName','fTeacherSubject','fTeacherPhone'].forEach(i=>document.getElementById(i).value='');
+    ['teacherId','fTeacherId','fTeacherName','fTeacherSubject','fTeacherPhone','fTeacherPin'].forEach(i=>document.getElementById(i).value='');
     const prev = document.getElementById('fTeacherPhotoPreview');
     prev.classList.add('hidden');
     const placeholder = document.getElementById('fTeacherPhotoPlaceholder');
@@ -136,6 +137,22 @@ function openTeacherModal(id=null) {
     document.getElementById('fTeacherPhoto').value = '';
   }
   document.getElementById('teacherModal').classList.remove('hidden');
+}
+
+// توليد رقم سري عشوائي (٤ أرقام) فريد للمعلم الحالي في النافذة
+async function generateTeacherPin() {
+  const id = document.getElementById('teacherId').value;
+  if (id) {
+    // معلم موجود مسبقاً: نطلب من الخادم رقماً فريداً ونحفظه مباشرة
+    const res = await apiFetch(`/teachers/${id}/attendance-pin/generate`, { method:'POST' });
+    if (res?.pin) { document.getElementById('fTeacherPin').value = res.pin; await loadAll(); }
+    return;
+  }
+  // معلم جديد لم يُحفظ بعد: نولّد رقماً محلياً ونتحقق أنه غير مستخدم من بين المعلمين المحمّلين
+  const used = new Set(state.teachers.map(t=>t.attendancePin).filter(Boolean));
+  let pin;
+  do { pin = String(Math.floor(1000 + Math.random()*9000)); } while (used.has(pin));
+  document.getElementById('fTeacherPin').value = pin;
 }
 
 function previewTeacherPhoto() {
@@ -148,13 +165,17 @@ function previewTeacherPhoto() {
 
 async function saveTeacher() {
   const id   = document.getElementById('teacherId').value;
-  const data = { teacherId:document.getElementById('fTeacherId').value.trim(), name:document.getElementById('fTeacherName').value.trim(), subject:document.getElementById('fTeacherSubject').value.trim(), phone:document.getElementById('fTeacherPhone').value.trim() };
+  const pin  = document.getElementById('fTeacherPin').value.trim();
+  if (pin && !/^\d{4}$/.test(pin)) return toast('الرقم السري يجب أن يكون 4 أرقام فقط');
+  const data = { teacherId:document.getElementById('fTeacherId').value.trim(), name:document.getElementById('fTeacherName').value.trim(), subject:document.getElementById('fTeacherSubject').value.trim(), phone:document.getElementById('fTeacherPhone').value.trim(), attendancePin: pin || null };
   if (!data.name) return toast('الاسم مطلوب');
   let savedId = id;
   if (id) {
-    await apiFetch(`/teachers/${id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data) });
+    const res = await apiFetch(`/teachers/${id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data) });
+    if (res?.error) return toast(res.error);
   } else {
     const res = await apiFetch('/teachers', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data) });
+    if (res?.error) return toast(res.error);
     savedId = res?.id;
   }
   const photoFile = document.getElementById('fTeacherPhoto').files[0];
@@ -269,6 +290,44 @@ async function saveTeacherLogEdit() {
   closeModal('teacherLogEditModal');
   await loadAll(); renderCheckinList(); loadTeacherSummary();
   toast('<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-left:3px;flex-shrink:0"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> تم تصحيح الوقت بنجاح');
+}
+
+// ── رمز QR لتسجيل الحضور الذاتي ─────────────────────────
+let _qrTokenData = null;
+
+async function openQrTokenModal() {
+  document.getElementById('qrTokenModal').classList.remove('hidden');
+  document.getElementById('qrTokenCanvas').innerHTML = '<div style="padding:40px;color:var(--text2);font-size:13px">جارٍ التحميل…</div>';
+  const data = await apiFetch('/checkin-token');
+  if (!data?.checkinUrl) return;
+  renderQrToken(data);
+}
+
+function renderQrToken(data) {
+  _qrTokenData = data;
+  document.getElementById('qrCheckinUrl').value = data.checkinUrl;
+  document.getElementById('qrScanUrl').value    = data.scanUrl;
+  const holder = document.getElementById('qrTokenCanvas');
+  holder.innerHTML = '';
+  if (window.QRCode) {
+    new QRCode(holder, { text: data.checkinUrl, width: 200, height: 200, correctLevel: QRCode.CorrectLevel.M });
+  } else {
+    holder.innerHTML = `<div style="font-size:12px;color:var(--text2)">تعذّر تحميل مكتبة الرمز، افتح الرابط أدناه مباشرة</div>`;
+  }
+}
+
+async function regenerateQrToken() {
+  if (!confirm('سيتم إبطال الرمز الحالي وأي نسخة مطبوعة منه. هل تريد المتابعة؟')) return;
+  const data = await apiFetch('/checkin-token/regenerate', { method:'POST' });
+  if (!data?.checkinUrl) return toast('تعذّر توليد رمز جديد');
+  renderQrToken(data);
+  toast('<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-left:3px;flex-shrink:0"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> تم توليد رمز جديد');
+}
+
+function copyQrField(inputId) {
+  const el = document.getElementById(inputId);
+  el.disabled = false; el.select(); document.execCommand('copy'); el.disabled = true;
+  toast('تم نسخ الرابط');
 }
 
 // ── ملخص ساعات المعلمين اليومية ──────────────────────
