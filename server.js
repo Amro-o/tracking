@@ -60,7 +60,9 @@ const DEFAULT_DB = {
     telegramChatId: '',
     logos: [],
     calendarType: 'hijri',
-    checkinToken: null
+    checkinToken: null,
+    autoCheckoutEnabled: false,
+    autoCheckoutTime: '16:00'
   }
 };
 
@@ -1508,20 +1510,42 @@ app.post('/api/checkin-token/regenerate', (req, res) => {
   res.json({ ok:true, token, ...buildCheckinUrls(req, token) });
 });
 
-// ── تسجيل حضور/انصراف ذاتي بواسطة الرقم السري (عبر مسح رمز QR) ──
-// أول مسح في اليوم = تسجيل حضور، ثاني مسح = تسجيل انصراف،
-// وإن كان مسجّلاً حضوره وانصرافه بالفعل (سواء ذاتياً أو من المشرف) يتم إخباره بذلك بدل التكرار.
-app.post('/api/teacher-log/pin-checkin', (req, res) => {
-  const { pin, token } = req.body;
-  const db = readDB();
+function _pinLookup(db, pin, token) {
   if (!db.settings.checkinToken || token !== db.settings.checkinToken) {
-    return res.json({ error: 'رمز QR غير صالح أو منتهي. يرجى مسح آخر رمز فعّال من الإدارة.' });
+    return { error: 'رمز QR غير صالح أو منتهي. يرجى مسح آخر رمز فعّال من الإدارة.' };
   }
   if (!pin || !/^\d{4}$/.test(String(pin))) {
-    return res.json({ error: 'الرجاء إدخال رقمك السري المكوّن من 4 أرقام' });
+    return { error: 'الرجاء إدخال رقمك السري المكوّن من 4 أرقام' };
   }
   const teacher = db.teachers.find(t => t.attendancePin === String(pin));
-  if (!teacher) return res.json({ error: 'الرقم السري غير صحيح' });
+  if (!teacher) return { error: 'الرقم السري غير صحيح' };
+  return { teacher };
+}
+
+// ── حالة المعلم اليوم بدون أي تعديل (يُستخدم قبل السؤال عن تأكيد الانصراف) ──
+app.post('/api/teacher-log/pin-status', (req, res) => {
+  const { pin, token } = req.body;
+  const db = readDB();
+  const { error, teacher } = _pinLookup(db, pin, token);
+  if (error) return res.json({ error });
+
+  const today = nowDate();
+  const entry = db.teacherLog.find(l => l.teacherId === teacher.id && l.date === today);
+  let state = 'checkin';
+  if (entry && entry.checkIn && !entry.checkOut) state = 'checkout';
+  else if (entry && entry.checkIn && entry.checkOut) state = 'done';
+
+  res.json({ ok:true, teacherName: teacher.name, state, checkIn: entry?.checkIn || null, checkOut: entry?.checkOut || null });
+});
+
+// ── تنفيذ تسجيل الحضور/الانصراف الفعلي — يتطلب action صريح من الواجهة ──
+// (تسجيل الحضور يتم مباشرة، أما الانصراف فيُطلب فقط بعد تأكيد المستخدم في الواجهة)
+app.post('/api/teacher-log/pin-checkin', (req, res) => {
+  const { pin, token, action } = req.body;
+  const db = readDB();
+  const { error, teacher } = _pinLookup(db, pin, token);
+  if (error) return res.json({ error });
+  if (action !== 'checkin' && action !== 'checkout') return res.json({ error: 'إجراء غير معروف' });
 
   const today = nowDate();
   const time  = nowTime();
@@ -1537,30 +1561,60 @@ app.post('/api/teacher-log/pin-checkin', (req, res) => {
 
   let entry = db.teacherLog.find(l => l.teacherId === teacher.id && l.date === today);
 
-  if (!entry) {
-    entry = { id:newId(), teacherId:teacher.id, date:today, checkIn:time, checkOut:null };
-    db.teacherLog.push(entry);
+  if (action === 'checkin') {
+    if (entry && entry.checkIn) {
+      return res.json({ error: `أنت مسجَّل حضورك بالفعل الساعة ${entry.checkIn}`, already:true, teacherName:teacher.name, checkIn:entry.checkIn, checkOut:entry.checkOut });
+    }
+    if (!entry) { entry = { id:newId(), teacherId:teacher.id, date:today, checkIn:time, checkOut:null }; db.teacherLog.push(entry); }
+    else { entry.checkIn = time; }
     writeDB(db);
     return res.json({ ok:true, action:'checkin', teacherName:teacher.name, time });
   }
-  if (!entry.checkIn) {
-    entry.checkIn = time;
-    writeDB(db);
-    return res.json({ ok:true, action:'checkin', teacherName:teacher.name, time });
+
+  // action === 'checkout'
+  if (!entry || !entry.checkIn) {
+    return res.json({ error: 'لم يتم تسجيل حضورك بعد اليوم', teacherName:teacher.name });
   }
-  if (!entry.checkOut) {
-    entry.checkOut = time;
-    writeDB(db);
-    const mins = calcSessionMins(entry.checkIn, time);
-    const duration = `${Math.floor(mins/60)} ساعة ${mins%60} دقيقة`;
-    return res.json({ ok:true, action:'checkout', teacherName:teacher.name, time, duration, checkIn:entry.checkIn });
+  if (entry.checkOut) {
+    return res.json({ error: `تم تسجيل انصرافك بالفعل الساعة ${entry.checkOut}`, already:true, teacherName:teacher.name, checkIn:entry.checkIn, checkOut:entry.checkOut });
   }
-  // تم تسجيل حضوره وانصرافه مسبقاً اليوم (ذاتياً أو من قبل المشرف) — لا نكرر التسجيل
-  return res.json({
-    error: `أنت مسجَّل حضورك (${entry.checkIn}) وانصرافك (${entry.checkOut}) بالفعل لهذا اليوم`,
-    already: true, teacherName: teacher.name, checkIn: entry.checkIn, checkOut: entry.checkOut,
-  });
+  entry.checkOut = time;
+  writeDB(db);
+  const mins = calcSessionMins(entry.checkIn, time);
+  const duration = `${Math.floor(mins/60)} ساعة ${mins%60} دقيقة`;
+  return res.json({ ok:true, action:'checkout', teacherName:teacher.name, time, duration, checkIn:entry.checkIn });
 });
+
+// ── تسجيل انصراف تلقائي لكل المعلمين في وقت محدد (إن كان مفعّلاً من الإعدادات) ──
+let _lastAutoCheckoutDate = null;
+function startAutoCheckoutScheduler() {
+  setInterval(() => {
+    try {
+      const db = readDB();
+      if (!db.settings.autoCheckoutEnabled) return;
+      const targetTime = db.settings.autoCheckoutTime || '16:00';
+      const today = nowDate();
+      const time  = nowTime();
+      if (time !== targetTime) return;
+      if (_lastAutoCheckoutDate === today) return; // نفّذناها بالفعل اليوم
+      _lastAutoCheckoutDate = today;
+
+      let changed = false;
+      db.teacherLog.forEach(l => {
+        if (l.date === today && l.checkIn && !l.checkOut) {
+          l.checkOut = targetTime;
+          changed = true;
+        }
+      });
+      if (changed) {
+        writeDB(db);
+        console.log(`[auto-checkout] تم تسجيل انصراف تلقائي للمعلمين الساعة ${targetTime}`);
+      }
+    } catch (e) {
+      console.error('[auto-checkout] error:', e.message);
+    }
+  }, 60 * 1000);
+}
 
 
 // ════════════════════════════════════════════════════════
@@ -4918,6 +4972,7 @@ _initCache()
       console.log(`║  📱 شبكة محلية: http://${ip}:${PORT}  ║`);
       console.log(`╚══════════════════════════════════════════╝\n`);
     });
+    startAutoCheckoutScheduler();
   })
   .catch(e => {
     console.error('[FATAL] فشل الاتصال بـ Supabase — تحقق من SUPABASE_URL و SUPABASE_KEY:', e.message);
