@@ -54,6 +54,14 @@
 
     <button class="ci-btn" id="ciSubmit">تسجيل</button>
 
+    <div class="ci-confirm" id="ciConfirm" style="display:none;margin-top:18px;background:var(--primary-l,#E4EDF8);border-radius:10px;padding:16px">
+      <div id="ciConfirmText" style="font-size:14px;color:var(--primary,#1E3A5F);margin-bottom:14px;line-height:1.8"></div>
+      <div style="display:flex;gap:10px">
+        <button class="ci-btn" id="ciConfirmYes" style="margin:0;background:var(--primary,#1E3A5F)">نعم، سجّل انصرافي</button>
+        <button class="ci-btn" id="ciConfirmNo" style="margin:0;background:transparent;color:var(--primary,#1E3A5F);border:1.5px solid var(--primary,#1E3A5F)">إلغاء</button>
+      </div>
+    </div>
+
     <div class="ci-msg" id="ciMsg"></div>
 
     <div class="ci-scanlink">لم تستطع فتح هذا الرابط بالمسح؟ <a href="/scan">امسح الرمز من هنا</a></div>
@@ -63,14 +71,19 @@
   const params = new URLSearchParams(location.search);
   const token  = params.get('t') || '';
   const digits = Array.from(document.querySelectorAll('.ci-digit'));
-  const submitBtn = document.getElementById('ciSubmit');
-  const msgBox = document.getElementById('ciMsg');
+  const submitBtn   = document.getElementById('ciSubmit');
+  const msgBox      = document.getElementById('ciMsg');
+  const confirmBox  = document.getElementById('ciConfirm');
+  const confirmText = document.getElementById('ciConfirmText');
+  const confirmYes  = document.getElementById('ciConfirmYes');
+  const confirmNo   = document.getElementById('ciConfirmNo');
+  let pendingPin = null;
 
   digits.forEach((el, i) => {
     el.addEventListener('input', () => {
       el.value = el.value.replace(/\D/g, '').slice(0, 1);
       if (el.value && i < digits.length - 1) digits[i+1].focus();
-      if (digits.every(d => d.value)) submitPin();
+      if (digits.every(d => d.value)) checkStatus();
     });
     el.addEventListener('keydown', (e) => {
       if (e.key === 'Backspace' && !el.value && i > 0) digits[i-1].focus();
@@ -83,17 +96,51 @@
     if (s.schoolName) document.getElementById('ciSchool').textContent = s.schoolName;
   }).catch(() => {});
 
-  submitBtn.addEventListener('click', submitPin);
+  submitBtn.addEventListener('click', checkStatus);
+  confirmNo.addEventListener('click', resetForm);
+  confirmYes.addEventListener('click', () => { if (pendingPin) doAction(pendingPin, 'checkout'); });
 
-  async function submitPin() {
+  async function checkStatus() {
     const pin = digits.map(d => d.value).join('');
     if (pin.length !== 4) { showMsg('err', 'الرجاء إدخال ٤ أرقام'); return; }
+    hideConfirm(); hideMsg();
+    submitBtn.disabled = true; submitBtn.textContent = 'جارٍ التحقق…';
+    try {
+      const res = await fetch('/api/teacher-log/pin-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin, token }),
+      });
+      const data = await res.json();
+      if (data.error) {
+        showMsg('err', data.error);
+        resetInputs();
+      } else if (data.state === 'checkin') {
+        await doAction(pin, 'checkin');
+        return; // doAction يعيد ضبط الزر
+      } else if (data.state === 'checkout') {
+        pendingPin = pin;
+        confirmText.innerHTML = `مرحباً <b>${escapeHtml(data.teacherName)}</b> 👋<br>أنت مسجَّل حضورك الساعة <span class="ci-time">${data.checkIn}</span>. هل تريد تسجيل انصرافك الآن؟`;
+        confirmBox.style.display = 'block';
+      } else if (data.state === 'done') {
+        showMsg('info', `أنت مسجَّل حضورك (${data.checkIn}) وانصرافك (${data.checkOut}) بالفعل لهذا اليوم`);
+        resetInputs();
+      }
+    } catch (e) {
+      showMsg('err', 'تعذّر الاتصال بالخادم، يرجى المحاولة مرة أخرى');
+      resetInputs();
+    }
+    submitBtn.disabled = false; submitBtn.textContent = 'تسجيل';
+  }
+
+  async function doAction(pin, action) {
+    hideConfirm();
     submitBtn.disabled = true; submitBtn.textContent = 'جارٍ التسجيل…';
     try {
       const res = await fetch('/api/teacher-log/pin-checkin', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pin, token }),
+        body: JSON.stringify({ pin, token, action }),
       });
       const data = await res.json();
       if (data.error) {
@@ -107,9 +154,13 @@
       showMsg('err', 'تعذّر الاتصال بالخادم، يرجى المحاولة مرة أخرى');
     }
     submitBtn.disabled = false; submitBtn.textContent = 'تسجيل';
-    digits.forEach(d => d.value = '');
-    digits[0].focus();
+    resetInputs();
   }
+
+  function resetForm() { hideConfirm(); resetInputs(); }
+  function resetInputs() { pendingPin = null; digits.forEach(d => d.value = ''); digits[0].focus(); }
+  function hideConfirm() { confirmBox.style.display = 'none'; }
+  function hideMsg() { msgBox.className = 'ci-msg'; msgBox.innerHTML = ''; }
 
   function showMsg(type, html) {
     msgBox.className = 'ci-msg ' + type;
