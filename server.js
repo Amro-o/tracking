@@ -978,6 +978,14 @@ app.get('/api/accounts', (req, res) => {
   res.json((db.accounts || []).map(a => ({ ...a, password: undefined })));
 });
 
+// تحديث خفيف لجلسة حساب واحد (لالتقاط تغييرات كربط ملف المعلم دون تسجيل خروج/دخول)
+app.get('/api/accounts/:id/self', (req, res) => {
+  const db  = readDB();
+  const acc = db.accounts.find(a => a.id === req.params.id);
+  if (!acc) return res.status(404).json({ error: 'الحساب غير موجود' });
+  res.json({ id: acc.id, name: acc.name, role: acc.role, assignedClasses: acc.assignedClasses || [], teacherId: acc.teacherId || null });
+});
+
 app.post('/api/accounts', (req, res) => {
   const { name, username, password, role, assignedClasses, teacherId } = req.body;
   if (!name || !username || !password || !role) return res.status(400).json({ error: 'بيانات ناقصة' });
@@ -3780,7 +3788,12 @@ app.get('/api/print/checkin-qr', (req, res) => {
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <style>
   :root{ --navy:#1E3A5F; --navy-d:#152B47; --gold:#B45309; --paper:#FDFCFA; }
-  *{box-sizing:border-box;margin:0;padding:0}
+  *{
+    box-sizing:border-box;margin:0;padding:0;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    color-adjust: exact !important;
+  }
   html,body{background:#e9edf3}
   body{
     font-family:'Tajawal',Arial,sans-serif; color:#1f2937;
@@ -3833,19 +3846,31 @@ app.get('/api/print/checkin-qr', (req, res) => {
     border-top:1px dashed #e5e9f0; margin:0 28px;
   }
   .no-print{
-    display:block; margin:0 auto 18px; padding:10px 26px; background:var(--gold); color:#fff;
+    display:block; margin:0 auto 10px; padding:10px 26px; background:var(--gold); color:#fff;
     border:none; border-radius:8px; cursor:pointer; font-size:13px; font-weight:700;
     font-family:inherit; box-shadow:0 6px 16px rgba(180,83,9,.3);
   }
+  .print-tip{
+    display:block; text-align:center; font-size:11px; color:#8b93a3; margin-bottom:18px;
+  }
   @page{ size:A4 portrait; margin:12mm }
   @media print{
-    body{ background:#fff; padding:0 }
-    .no-print{ display:none }
+    html, body{
+      background:#fff !important; padding:0 !important;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+    .no-print, .print-tip{ display:none !important }
     .sheet{ box-shadow:none; border-radius:0; max-width:100% }
+    .band, .step-num, .no-print, .qr-plate{
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
   }
 </style></head><body>
 <div style="width:100%;max-width:520px">
   <button class="no-print" onclick="window.print()">🖨 طباعة</button>
+  <span class="print-tip">إن ظهرت الطباعة بالأبيض والأسود، فعّل خيار "الرسومات والألوان الخلفية / Background graphics" من إعدادات الطباعة المتقدمة</span>
   <div class="sheet">
     <div class="band">
       ${logo ? `<img class="band-logo" src="${logo}" alt="${school}" />` : ''}
