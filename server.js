@@ -1740,7 +1740,7 @@ app.post('/api/attendance/batch', (req, res) => {
   const waToken = db.settings.whatsappApiKey;
   const adminPhone = db.settings.adminPhone;
   if (waToken && adminPhone) {
-    const today = new Date().toLocaleDateString('ar-SA-u-ca-islamic', { day:'numeric', month:'long', year:'numeric' });
+    const today = formatHijri(nowDate());
     const waMsg = `📋 *تسجيل حضور جديد*\n\n👨‍🏫 المعلم: ${teacher}\n📚 الحلقة: ${clsName}\n📅 ${today}\n\n✅ حاضر: ${present}\n❌ غائب: ${absent}${late ? `\n⏰ متأخر: ${late}` : ''}\n👥 الإجمالي: ${records.length}`;
     fonnteRequest(waToken, adminPhone, waMsg).catch(() => {});
   }
