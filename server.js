@@ -1696,6 +1696,20 @@ app.delete('/api/holidays/:date', (req, res) => {
 });
 
 
+// ── تشخيص: التحقق من تحميل مكتبة أم القرى وصحة التاريخ الهجري ──
+app.get('/api/debug/hijri', (req, res) => {
+  const today = nowDate();
+  res.json({
+    umalquraLoaded: !!UmAlQuraLib,
+    serverTime: new Date().toISOString(),
+    timezoneUsed: _TZ,
+    todayGregorian: today,
+    todayHijri: formatHijri(today),
+    todayHijriRaw: toHijri(today),
+    fallbackHijriRaw: _toHijriFallback(+today.split('-')[0], +today.split('-')[1], +today.split('-')[2]),
+  });
+});
+
 // ════════════════════════════════════════════════════════
 //  7. الحضور
 // ════════════════════════════════════════════════════════
