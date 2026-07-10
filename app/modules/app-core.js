@@ -216,21 +216,18 @@ const GREGORIAN_MONTHS = [
 const ARABIC_DAYS = ['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت'];
 
 // ══════════════════════════════════════════════════════════
-//  تحويل التاريخ الميلادي إلى هجري
+//  تحويل التاريخ الميلادي إلى هجري (تقويم أم القرى الرسمي عبر مكتبة umalqura)
+//  احتياطي: تقويم هجري حسابي تقريبي — يُستخدم فقط إذا تعذّر تحميل
+//  المكتبة (مثلاً بسبب انقطاع الإنترنت)، وقد يختلف يوماً أو يومين
+//  عن تقويم أم القرى الرسمي.
 // ══════════════════════════════════════════════════════════
-function toHijri(dateStr) {
-  // Parse date parts directly from string to avoid timezone shifts
-  const parts = (typeof dateStr === 'string' ? dateStr : dateStr.toISOString().slice(0,10)).split('-');
-  const gy = +parts[0], gm = +parts[1], gd = +parts[2];
-
-  // Gregorian → Julian Day Number (proleptic Gregorian calendar)
+function _toHijriFallback(gy, gm, gd) {
   const a   = Math.floor((14 - gm) / 12);
   const yy  = gy + 4800 - a;
   const mm  = gm + 12 * a - 3;
   const jdn = gd + Math.floor((153 * mm + 2) / 5) + 365 * yy +
               Math.floor(yy / 4) - Math.floor(yy / 100) + Math.floor(yy / 400) - 32045;
 
-  // Julian Day Number → Hijri (tabular Islamic calendar, epoch JDN 1948440)
   const EPOCH = 1948440, CYCLE = 10631;
   const LEAP  = new Set([2,5,7,10,13,15,18,21,24,26,29]);
   const yLen  = y => LEAP.has(y % 30 === 0 ? 30 : y % 30) ? 355 : 354;
@@ -248,6 +245,19 @@ function toHijri(dateStr) {
   while (n >= mLen(hYear, hMonth)) { n -= mLen(hYear, hMonth); hMonth++; if (hMonth > 12) break; }
 
   return { year: hYear, month: hMonth, day: n + 1 };
+}
+
+function toHijri(dateStr) {
+  // Parse date parts directly from string to avoid timezone shifts
+  const parts = (typeof dateStr === 'string' ? dateStr : dateStr.toISOString().slice(0,10)).split('-');
+  const gy = +parts[0], gm = +parts[1], gd = +parts[2];
+
+  if (typeof umalqura === 'function') {
+    // نستخدم ظهر اليوم بتوقيت UTC لتفادي أي انزياح للتاريخ بسبب فروقات التوقيت
+    const h = umalqura(new Date(Date.UTC(gy, gm - 1, gd, 12, 0, 0)));
+    return { year: h.hy, month: h.hm, day: h.hd };
+  }
+  return _toHijriFallback(gy, gm, gd);
 }
 
 function formatHijri(dateStr) {
