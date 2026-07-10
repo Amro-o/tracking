@@ -113,14 +113,46 @@ function visibleStudents() {
 // ── بوابة تسجيل الحضور ────────────────────────────────
 // المعلمون: تُقفل الواجهة بالكامل حتى يسجلوا حضورهم.
 // المدير/المشرف: لا تقييد، فقط شارة تذكير غير مانعة.
+// يُحدّث بيانات الجلسة (الربط بملف المعلم، الحلقات المُسندة، إلخ) من الخادم
+// دون الحاجة لتسجيل خروج/دخول — يلتقط تغييرات مثل ربط الحساب بملف حضور بعد بدء الجلسة.
+async function refreshSessionLinkage() {
+  if (!currentUserId) return;
+  try {
+    const acc = await apiFetch('/accounts/' + currentUserId + '/self');
+    if (!acc) return;
+    currentTeacherId       = acc.teacherId || null;
+    currentAssignedClasses = acc.assignedClasses || currentAssignedClasses;
+    const raw = sessionStorage.getItem(AUTH_KEY);
+    const s = JSON.parse(raw || '{}');
+    s.teacherId = currentTeacherId;
+    s.assignedClasses = currentAssignedClasses;
+    sessionStorage.setItem(AUTH_KEY, JSON.stringify(s));
+  } catch (e) { /* تجاهل — ستُعاد المحاولة عند إعادة الدخول */ }
+}
+
+let _checkinGateInterval = null;
+function startCheckinGatePolling() {
+  if (_checkinGateInterval) return; // already running
+  _checkinGateInterval = setInterval(async () => {
+    if (!currentTeacherId) return;
+    try {
+      const teacherLog = await apiFetch('/teacher-log?date=' + todayISO());
+      if (Array.isArray(teacherLog)) state.teacherLog = teacherLog;
+    } catch (e) { /* تجاهل فشل التحديث المؤقت */ }
+    checkTeacherCheckinGate();
+  }, 3 * 60 * 1000); // كل 3 دقائق
+}
+
 function checkTeacherCheckinGate() {
   const overlay = document.getElementById('checkinGateOverlay');
   const badge   = document.getElementById('checkinReminderBadge');
+  const badgeM  = document.getElementById('checkinReminderBadgeMobile');
 
   // لا يوجد ربط بملف معلم لهذا الحساب — لا شيء لعرضه
   if (!currentTeacherId) {
     overlay?.classList.add('hidden');
     badge?.classList.add('hidden');
+    badgeM?.classList.add('hidden');
     return;
   }
 
@@ -129,10 +161,12 @@ function checkTeacherCheckinGate() {
 
   if (currentRole === 'teacher') {
     badge?.classList.add('hidden'); // teachers don't get the header badge at all
+    badgeM?.classList.add('hidden');
     overlay?.classList.toggle('hidden', checkedIn);
   } else {
     overlay?.classList.add('hidden'); // admin/moderator are never blocked
     badge?.classList.toggle('hidden', checkedIn);
+    badgeM?.classList.toggle('hidden', checkedIn);
   }
 }
 
@@ -279,7 +313,9 @@ async function pinSubmit(overridePin) {
       await loadAll(); await loadAndDisplayLogos(); navigate(_savedPage);
       refreshNotifBadge();
       waUpdateNavBadge();
+      await refreshSessionLinkage();
       checkTeacherCheckinGate();
+      startCheckinGatePolling();
       bioOfferEnroll(password);
       // Real-time WA badge via SSE — admin/moderator only
       if (currentRole !== 'teacher') {
