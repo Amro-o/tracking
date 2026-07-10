@@ -145,6 +145,12 @@
         </svg>
         <span class="notif-badge hidden" id="notifBadgeMobile">0</span>
       </button>
+      <!-- Mobile-only checkin reminder (header-right is hidden on mobile to center the logo, so this lives here instead) -->
+      <span class="checkin-badge-mobile-wrap">
+        <button class="btn-icon hidden" id="checkinReminderBadgeMobile" onclick="selfCheckinNow()" aria-label="تسجيل الحضور" title="لم تسجل حضورك اليوم — اضغط للتسجيل">
+          <span style="font-size:17px;line-height:1">⏰</span>
+        </button>
+      </span>
     </div>
     <div class="header-brand" onclick="navigate('dashboard')" style="cursor:pointer" title="الرئيسية">
       <div class="header-logos" id="headerLogos"></div>
