@@ -63,6 +63,5 @@
   "engines": {
     "node": ">=18.0.0"
   },
-  "keywords": ["attendance", "quran", "school", "arabic"],
   "license": "MIT"
 }
