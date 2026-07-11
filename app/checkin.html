@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>تسجيل الحضور</title>
+<link rel="stylesheet" href="/styles.css" />
+<style>
+  html,body{height:100%}
+  body{
+    display:flex; align-items:center; justify-content:center;
+    background:var(--bg, #ECF0F7); margin:0; padding:20px;
+    font-family:inherit;
+  }
+  .ci-card{
+    width:100%; max-width:400px; background:var(--surface,#fff);
+    border-radius:var(--radius-lg,16px); box-shadow:var(--shadow-lg,0 10px 36px rgba(10,20,50,.14));
+    padding:32px 26px; text-align:center;
+  }
+  .ci-logo{font-size:20px; font-weight:800; color:var(--primary,#1E3A5F); margin-bottom:2px}
+  .ci-sub{font-size:13px; color:var(--text2,#4B5563); margin-bottom:24px}
+  .ci-pin-boxes{display:flex; gap:10px; justify-content:center; direction:ltr; margin-bottom:20px}
+  .ci-pin-boxes input{
+    width:52px; height:62px; text-align:center; font-size:26px; font-weight:700;
+    border:2px solid var(--border,#CBD5E6); border-radius:10px; color:var(--text,#111827);
+    -webkit-appearance:none; appearance:none;
+  }
+  .ci-pin-boxes input:focus{ outline:none; border-color:var(--primary,#1E3A5F); }
+  .ci-btn{
+    width:100%; padding:14px; font-size:16px; font-weight:700; border:none; border-radius:10px;
+    background:var(--primary,#1E3A5F); color:#fff; cursor:pointer; margin-top:4px;
+  }
+  .ci-btn:disabled{ opacity:.6; cursor:default }
+  .ci-msg{ margin-top:18px; font-size:14px; border-radius:10px; padding:14px 12px; display:none; line-height:1.9 }
+  .ci-msg.ok{ display:block; background:var(--success-l,#DCFCE7); color:var(--success,#166534) }
+  .ci-msg.info{ display:block; background:var(--primary-l,#E4EDF8); color:var(--primary,#1E3A5F) }
+  .ci-msg.err{ display:block; background:var(--error-l,#FEF2F2); color:var(--error,#991B1B) }
+  .ci-time{ font-family:var(--mono,monospace); font-weight:700 }
+  .ci-scanlink{ margin-top:18px; font-size:12px }
+  .ci-scanlink a{ color:var(--primary,#1E3A5F) }
+</style>
+</head>
+<body>
+  <div class="ci-card">
+    <div class="ci-logo" id="ciSchool">تسجيل الحضور</div>
+    <div class="ci-sub">أدخل رقمك السري المكوّن من ٤ أرقام لتسجيل حضورك أو انصرافك</div>
+
+    <div class="ci-pin-boxes">
+      <input type="tel" inputmode="numeric" maxlength="1" class="ci-digit" />
+      <input type="tel" inputmode="numeric" maxlength="1" class="ci-digit" />
+      <input type="tel" inputmode="numeric" maxlength="1" class="ci-digit" />
+      <input type="tel" inputmode="numeric" maxlength="1" class="ci-digit" />
+    </div>
+
+    <button class="ci-btn" id="ciSubmit">تسجيل</button>
+
+    <div class="ci-confirm" id="ciConfirm" style="display:none;margin-top:18px;background:var(--primary-l,#E4EDF8);border-radius:10px;padding:16px">
+      <div id="ciConfirmText" style="font-size:14px;color:var(--primary,#1E3A5F);margin-bottom:14px;line-height:1.8"></div>
+      <div style="display:flex;gap:10px">
+        <button class="ci-btn" id="ciConfirmYes" style="margin:0;background:var(--primary,#1E3A5F)">نعم، سجّل انصرافي</button>
+        <button class="ci-btn" id="ciConfirmNo" style="margin:0;background:transparent;color:var(--primary,#1E3A5F);border:1.5px solid var(--primary,#1E3A5F)">إلغاء</button>
+      </div>
+    </div>
+
+    <div class="ci-msg" id="ciMsg"></div>
+
+    <div class="ci-scanlink">لم تستطع فتح هذا الرابط بالمسح؟ <a href="/scan">امسح الرمز من هنا</a></div>
+  </div>
+
+<script>
+  const params = new URLSearchParams(location.search);
+  const token  = params.get('t') || '';
+  const digits = Array.from(document.querySelectorAll('.ci-digit'));
+  const submitBtn   = document.getElementById('ciSubmit');
+  const msgBox      = document.getElementById('ciMsg');
+  const confirmBox  = document.getElementById('ciConfirm');
+  const confirmText = document.getElementById('ciConfirmText');
+  const confirmYes  = document.getElementById('ciConfirmYes');
+  const confirmNo   = document.getElementById('ciConfirmNo');
+  let pendingPin = null;
+
+  digits.forEach((el, i) => {
+    el.addEventListener('input', () => {
+      el.value = el.value.replace(/\D/g, '').slice(0, 1);
+      if (el.value && i < digits.length - 1) digits[i+1].focus();
+      if (digits.every(d => d.value)) checkStatus();
+    });
+    el.addEventListener('keydown', (e) => {
+      if (e.key === 'Backspace' && !el.value && i > 0) digits[i-1].focus();
+    });
+  });
+  digits[0].focus();
+
+  // جلب اسم المدرسة لعرضه في أعلى البطاقة (اختياري، لا يوقف الصفحة إن فشل)
+  fetch('/api/settings').then(r => r.json()).then(s => {
+    if (s.schoolName) document.getElementById('ciSchool').textContent = s.schoolName;
+  }).catch(() => {});
+
+  submitBtn.addEventListener('click', checkStatus);
+  confirmNo.addEventListener('click', resetForm);
+  confirmYes.addEventListener('click', () => { if (pendingPin) doAction(pendingPin, 'checkout'); });
+
+  async function checkStatus() {
+    const pin = digits.map(d => d.value).join('');
+    if (pin.length !== 4) { showMsg('err', 'الرجاء إدخال ٤ أرقام'); return; }
+    hideConfirm(); hideMsg();
+    submitBtn.disabled = true; submitBtn.textContent = 'جارٍ التحقق…';
+    try {
+      const res = await fetch('/api/teacher-log/pin-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin, token }),
+      });
+      const data = await res.json();
+      if (data.error) {
+        showMsg('err', data.error);
+        resetInputs();
+      } else if (data.state === 'checkin') {
+        await doAction(pin, 'checkin');
+        return; // doAction يعيد ضبط الزر
+      } else if (data.state === 'checkout') {
+        pendingPin = pin;
+        confirmText.innerHTML = `مرحباً <b>${escapeHtml(data.teacherName)}</b> 👋<br>أنت مسجَّل حضورك الساعة <span class="ci-time">${data.checkIn}</span>. هل تريد تسجيل انصرافك الآن؟`;
+        confirmBox.style.display = 'block';
+      } else if (data.state === 'done') {
+        showMsg('info', `أنت مسجَّل حضورك (${data.checkIn}) وانصرافك (${data.checkOut}) بالفعل لهذا اليوم`);
+        resetInputs();
+      }
+    } catch (e) {
+      showMsg('err', 'تعذّر الاتصال بالخادم، يرجى المحاولة مرة أخرى');
+      resetInputs();
+    }
+    submitBtn.disabled = false; submitBtn.textContent = 'تسجيل';
+  }
+
+  async function doAction(pin, action) {
+    hideConfirm();
+    submitBtn.disabled = true; submitBtn.textContent = 'جارٍ التسجيل…';
+    try {
+      const res = await fetch('/api/teacher-log/pin-checkin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin, token, action }),
+      });
+      const data = await res.json();
+      if (data.error) {
+        showMsg(data.already ? 'info' : 'err', data.error);
+      } else if (data.action === 'checkin') {
+        showMsg('ok', `مرحباً <b>${escapeHtml(data.teacherName)}</b> 👋<br>تم تسجيل حضورك الساعة <span class="ci-time">${data.time}</span>`);
+      } else if (data.action === 'checkout') {
+        showMsg('ok', `إلى اللقاء <b>${escapeHtml(data.teacherName)}</b> 👋<br>تم تسجيل انصرافك الساعة <span class="ci-time">${data.time}</span><br>مدة الحضور: ${data.duration}`);
+      }
+    } catch (e) {
+      showMsg('err', 'تعذّر الاتصال بالخادم، يرجى المحاولة مرة أخرى');
+    }
+    submitBtn.disabled = false; submitBtn.textContent = 'تسجيل';
+    resetInputs();
+  }
+
+  function resetForm() { hideConfirm(); resetInputs(); }
+  function resetInputs() { pendingPin = null; digits.forEach(d => d.value = ''); digits[0].focus(); }
+  function hideConfirm() { confirmBox.style.display = 'none'; }
+  function hideMsg() { msgBox.className = 'ci-msg'; msgBox.innerHTML = ''; }
+
+  function showMsg(type, html) {
+    msgBox.className = 'ci-msg ' + type;
+    msgBox.innerHTML = html;
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+</script>
+</body>
+</html>
