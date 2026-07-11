@@ -78,8 +78,33 @@ async function loadAndDisplayLogos() {
 }
 
 async function apiFetch(path, opts={}) {
-  try { const r = await fetch(`${API}${path}`, opts); return await r.json(); }
+  try {
+    const headers = { ...(opts.headers||{}) };
+    if (currentSessionToken) headers['Authorization'] = 'Bearer ' + currentSessionToken;
+    const r = await fetch(`${API}${path}`, { ...opts, headers });
+    const data = await r.json().catch(() => null);
+    if (r.status === 401 && data?.sessionExpired) {
+      _handleSessionExpired();
+      return null;
+    }
+    return data;
+  }
   catch(e) { console.error('API error:', path, e); return null; }
+}
+
+// تُستدعى عند انتهاء صلاحية الجلسة أو إبطالها من الخادم (مثلاً بعد تغيير كلمة المرور من جهاز آخر)
+let _sessionExpiredHandled = false;
+function _handleSessionExpired() {
+  if (_sessionExpiredHandled) return; // تجنّب تكرار المعالجة لعدة طلبات فاشلة متزامنة
+  _sessionExpiredHandled = true;
+  sessionStorage.removeItem(AUTH_KEY);
+  currentSessionToken = null;
+  const errEl = document.getElementById('pinError');
+  document.getElementById('app')?.classList.add('hidden');
+  document.getElementById('pinScreen')?.classList.remove('hidden');
+  if (typeof loginShowFullForm === 'function') loginShowFullForm();
+  if (errEl) errEl.textContent = 'انتهت صلاحية جلستك، يرجى تسجيل الدخول مجدداً';
+  setTimeout(() => { _sessionExpiredHandled = false; }, 3000);
 }
 
 // Set browser-tab favicon from a URL (PNG/JPG/SVG/ICO all work)
@@ -197,8 +222,8 @@ async function navigate(page) {
 let _accountsList = [];
 
 async function initAccountsPage() {
-  const res = await fetch(`${API}/accounts`);
-  _accountsList = await res.json();
+  const data = await apiFetch('/accounts');
+  _accountsList = Array.isArray(data) ? data : [];
   renderAccountsList();
 }
 
@@ -313,16 +338,16 @@ async function saveAccount() {
 
   if (!name || !username) { toast('<span data-toast="err">⚠️</span> الاسم واسم المستخدم مطلوبان'); return; }
   if (!id && !password)   { toast('<span data-toast="err">⚠️</span> كلمة المرور مطلوبة لحساب جديد'); return; }
+  if (password && password.length < 8) { toast('<span data-toast="err">⚠️</span> كلمة المرور يجب ألا تقل عن 8 أحرف'); return; }
 
   const body = { name, username, role, assignedClasses: assigned, teacherId };
   if (password) body.password = password;
 
-  const url    = id ? `${API}/accounts/${id}` : `${API}/accounts`;
+  const path   = id ? `/accounts/${id}` : '/accounts';
   const method = id ? 'PUT' : 'POST';
-  const res    = await fetch(url, { method, headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
-  const data   = await res.json();
+  const data   = await apiFetch(path, { method, headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
 
-  if (data.error) { toast(`<span data-toast="err">⚠️</span> ${data.error}`); return; }
+  if (data?.error) { toast(`<span data-toast="err">⚠️</span> ${data.error}`); return; }
   toast(`<span data-toast="ok">✓</span> ${id ? 'تم تحديث الحساب' : 'تم إنشاء الحساب'}`);
   closeModal('accModal');
   initAccountsPage();
@@ -330,15 +355,16 @@ async function saveAccount() {
 
 async function deleteAccount(id, name) {
   if (!confirm(`هل تريد حذف حساب "${name}"؟`)) return;
-  const res  = await fetch(`${API}/accounts/${id}`, { method:'DELETE' });
-  const data = await res.json();
-  if (data.error) { toast(`<span data-toast="err">⚠️</span> ${data.error}`); return; }
+  const data = await apiFetch(`/accounts/${id}`, { method:'DELETE' });
+  if (data?.error) { toast(`<span data-toast="err">⚠️</span> ${data.error}`); return; }
   toast(`تم حذف الحساب`);
   initAccountsPage();
 }
 
 function exportAccounts() {
-  window.open(`${API}/accounts/export`, '_blank');
+  // window.open لا يرسل ترويسات مخصصة، لذا نمرر رمز الجلسة كمعامل رابط بدلاً من ذلك
+  const url = `${API}/accounts/export` + (currentSessionToken ? `?token=${encodeURIComponent(currentSessionToken)}` : '');
+  window.open(url, '_blank');
   toast('<span data-toast="ok">⬇</span> جارٍ تصدير الحسابات…');
 }
 
@@ -370,12 +396,11 @@ function previewAccountsImport(input) {
 async function confirmAccountsImport() {
   if (!_accImportData) return;
   const mode = document.querySelector('input[name="accImportMode"]:checked')?.value || 'merge';
-  const res = await fetch(`${API}/accounts/import`, {
+  const data = await apiFetch('/accounts/import', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ accounts: _accImportData, mode }),
   });
-  const data = await res.json();
-  if (data.error) { toast(`<span data-toast="err">⚠️</span> ${data.error}`); return; }
+  if (data?.error) { toast(`<span data-toast="err">⚠️</span> ${data.error}`); return; }
   toast(`<span data-toast="ok">✓</span> تم استيراد ${data.count} حساب`);
   closeModal('accImportModal');
   _accImportData = null;
