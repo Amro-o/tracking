@@ -13,6 +13,7 @@ let currentUserId          = '';
 let currentUserName        = '';
 let currentAssignedClasses = [];
 let currentTeacherId       = null; // ملف المعلم المرتبط بهذا الحساب (لتتبع تسجيل الحضور)
+let currentSessionToken    = null; // رمز الجلسة الصادر من الخادم — يُرسل مع كل طلب API
 
 const AUTH_KEY       = 'halaqat_auth_v2';
 const SAVED_USER_KEY = 'halaqat_saved_user'; // persists through lock — only cleared on logout
@@ -24,10 +25,12 @@ function _saveSession(data) {
   currentUserName        = data.name            || data.username || '';
   currentAssignedClasses = data.assignedClasses || [];
   currentTeacherId       = data.teacherId       || null;
+  currentSessionToken    = data.token           || null;
   const payload = JSON.stringify({
     role: currentRole, userId: currentUserId,
     name: currentUserName, assignedClasses: currentAssignedClasses,
     username: data.username || '', teacherId: currentTeacherId,
+    token: currentSessionToken,
   });
   // sessionStorage: survives Ctrl+R but clears on tab close
   sessionStorage.setItem(AUTH_KEY, payload);
@@ -46,6 +49,8 @@ function _loadSession() {
     currentRole = s.role; currentUserId = s.userId || '';
     currentUserName = s.name || ''; currentAssignedClasses = s.assignedClasses || [];
     currentTeacherId = s.teacherId || null;
+    currentSessionToken = s.token || null;
+    if (!currentSessionToken) return false; // جلسات قديمة بلا رمز — تحتاج إعادة دخول
     return true;
   } catch(e) { return false; }
 }
@@ -451,7 +456,15 @@ async function pinSubmit(overridePin) {
       } // end teacher guard for Fonnte
 
     } else {
-      if (errEl) { errEl.textContent = 'كلمة المرور غير صحيحة.'; setTimeout(()=>errEl.textContent='',2500); }
+      if (errEl) {
+        if (data.locked) {
+          const mins = Math.ceil((data.retryAfterSec||60) / 60);
+          errEl.textContent = data.error || `محاولات كثيرة فاشلة. حاول مجدداً بعد ${mins} دقيقة`;
+        } else {
+          errEl.textContent = 'كلمة المرور غير صحيحة.';
+          setTimeout(()=>errEl.textContent='',2500);
+        }
+      }
       // Shake and clear the dial
       const dotsRow = document.getElementById('pinDisplay');
       if (dotsRow) { dotsRow.classList.add('pin-shake'); setTimeout(()=>dotsRow.classList.remove('pin-shake'),500); }
@@ -471,7 +484,7 @@ function lockApp() {
   sessionStorage.removeItem(AUTH_KEY);
   sessionStorage.removeItem('halaqat_last_page'); // always go home after locking
   localStorage.removeItem(AUTH_KEY); // clear any legacy localStorage token
-  currentRole = 'admin'; currentUserId = ''; currentUserName = ''; currentAssignedClasses = [];
+  currentRole = 'admin'; currentUserId = ''; currentUserName = ''; currentAssignedClasses = []; currentSessionToken = null;
   _dialReset();
   if (document.getElementById('loginPassword')) document.getElementById('loginPassword').value = '';
   if (document.getElementById('pinError'))      document.getElementById('pinError').textContent = '';
@@ -486,13 +499,17 @@ function lockApp() {
 
 /* ── logoutApp: full logout — wipe everything including saved username ── */
 function logoutApp() {
+  // إبطال الجلسة على الخادم — لا ننتظر النتيجة، ننظف الواجهة فوراً
+  if (currentSessionToken) {
+    fetch(`${API}/auth/logout`, { method:'POST', headers:{ 'Authorization':'Bearer '+currentSessionToken } }).catch(()=>{});
+  }
   sessionStorage.removeItem(AUTH_KEY);
   localStorage.removeItem(AUTH_KEY); // clear any legacy localStorage token
   localStorage.removeItem(SAVED_USER_KEY);
   localStorage.removeItem('halaqat_last_page');
   sessionStorage.removeItem('halaqat_last_page');
   sessionStorage.removeItem('halaqat_auth');
-  currentRole = 'admin'; currentUserId = ''; currentUserName = ''; currentAssignedClasses = [];
+  currentRole = 'admin'; currentUserId = ''; currentUserName = ''; currentAssignedClasses = []; currentSessionToken = null;
   _dialReset();
   if (document.getElementById('loginUsername'))  document.getElementById('loginUsername').value = '';
   if (document.getElementById('loginPassword'))  document.getElementById('loginPassword').value = '';
@@ -508,6 +525,47 @@ function confirmLogout() {
   if (confirm('تسجيل الخروج؟\n\nستحتاج لإدخال اسم المستخدم وكلمة المرور في المرة القادمة.')) {
     logoutApp();
   }
+}
+
+// ── استعادة وصول المدير (عبر الرمز الرئيسي في الإعدادات) ──
+function openAdminRecoveryModal() {
+  document.getElementById('recMasterPin').value = '';
+  document.getElementById('recResult').style.display = 'none';
+  document.getElementById('recError').style.display = 'none';
+  document.getElementById('adminRecoveryModal').classList.remove('hidden');
+  setTimeout(() => document.getElementById('recMasterPin')?.focus(), 100);
+}
+
+async function submitAdminRecovery() {
+  const masterPin = document.getElementById('recMasterPin').value.trim();
+  const resultEl  = document.getElementById('recResult');
+  const errEl     = document.getElementById('recError');
+  const btn       = document.getElementById('recSubmitBtn');
+  resultEl.style.display = 'none'; errEl.style.display = 'none';
+  if (!masterPin) { errEl.textContent = 'أدخل الرمز الرئيسي'; errEl.style.display = 'block'; return; }
+
+  btn.disabled = true; btn.textContent = 'جارٍ التحقق…';
+  try {
+    const res = await fetch(`${API}/auth/recover-admin`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ masterPin }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) {
+      errEl.textContent = data.error || 'تعذّرت العملية';
+      errEl.style.display = 'block';
+    } else {
+      resultEl.innerHTML = `تم إنشاء كلمة مرور مؤقتة لحساب المدير:<br>
+        اسم المستخدم: <b>${data.username}</b><br>
+        كلمة المرور المؤقتة: <b style="font-family:monospace;font-size:15px">${data.temporaryPassword}</b><br><br>
+        سجّل الدخول بها ثم غيّرها فوراً من صفحة الحسابات.`;
+      resultEl.style.display = 'block';
+    }
+  } catch(e) {
+    errEl.textContent = 'تعذّر الاتصال بالخادم';
+    errEl.style.display = 'block';
+  }
+  btn.disabled = false; btn.textContent = 'إنشاء كلمة مرور مؤقتة';
 }
 
 // ══════════════════════════════════════════════════════════
