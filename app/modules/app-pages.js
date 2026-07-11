@@ -1019,27 +1019,19 @@ async function changePin() {
   const newPin  = document.getElementById('settNewPin').value;
   const confPin = document.getElementById('settConfPin').value;
   const statusEl= document.getElementById('pinStatus');
-  if (newPin.length < 1) {
-    statusEl.style.color = 'var(--error)'; statusEl.textContent = 'أدخل كلمة المرور الجديدة.'; return;
+  if (newPin.length < 8) {
+    statusEl.style.color = 'var(--error)'; statusEl.textContent = 'كلمة المرور الجديدة يجب ألا تقل عن 8 أحرف.'; return;
   }
   if (newPin !== confPin) {
     statusEl.style.color = 'var(--error)'; statusEl.textContent = 'كلمة المرور الجديدة وتأكيدها غير متطابقين.'; return;
   }
-  // Verify old password using current user's credentials
-  const saved = _getSavedUser ? _getSavedUser() : null;
-  const username = saved?.username || currentUserId || 'admin';
-  const verify = await apiFetch('/auth/verify', {
+  const result = await apiFetch('/auth/change-password', {
     method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ username, password: oldPin }),
+    body: JSON.stringify({ oldPassword: oldPin, newPassword: newPin }),
   });
-  if (!verify?.valid) {
-    statusEl.style.color = 'var(--error)'; statusEl.textContent = 'كلمة المرور الحالية غير صحيحة.'; return;
+  if (!result?.ok) {
+    statusEl.style.color = 'var(--error)'; statusEl.textContent = result?.error || 'تعذّر تغيير كلمة المرور.'; return;
   }
-  // Update the account password
-  await apiFetch(`/accounts/${verify.userId || currentUserId}`, {
-    method:'PUT', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ password: newPin }),
-  });
   // Also update settings.pin for admin (legacy PIN support)
   if (currentRole === 'admin') {
     await apiFetch('/settings', { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ pin: newPin }) });
