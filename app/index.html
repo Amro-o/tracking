@@ -18,7 +18,6 @@
 <!-- Lucide icons — must load synchronously for icons to render -->
 <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-<script src="https://unpkg.com/@umalqura/core@0.0.7/dist/umalqura.min.js"></script>
 <!-- QR Code generator — async, only needed for QR display -->
 <script>
 (function(){
@@ -101,6 +100,7 @@
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
         دخول
       </button>
+      <button type="button" class="login-forgot-link" onclick="openAdminRecoveryModal()">نسيت كلمة مرور المدير؟</button>
     </div>
 
     <p id="pinError" class="pin-error"></p>
@@ -110,6 +110,26 @@
       <p style="font-size:12px;color:#64748b;margin:0 0 10px">امسح للدخول من هاتفك (نفس الشبكة)</p>
       <div id="pinQrCanvas" style="display:inline-block;background:var(--surface);padding:6px;border-radius:8px;border:2px solid var(--border)"></div>
       <p id="pinQrUrl" style="font-size:11px;color:#94a3b8;margin:6px 0 0;direction:ltr;font-family:monospace">جارٍ التحميل…</p>
+    </div>
+  </div>
+</div>
+
+<!-- استعادة وصول المدير — يتطلب معرفة الرمز الرئيسي في الإعدادات -->
+<div id="adminRecoveryModal" class="modal-overlay hidden">
+  <div class="modal" style="max-width:380px">
+    <div class="modal-header">
+      <h3>استعادة وصول المدير</h3>
+      <button class="btn-icon" onclick="closeModal('adminRecoveryModal')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:13px;color:var(--text2);margin-bottom:14px;line-height:1.8">أدخل الرمز الرئيسي (الرمز السري السريع المكوَّن من أرقام والمستخدم في شاشة الدخول السريع) لإنشاء كلمة مرور مؤقتة لحساب المدير.</p>
+      <div class="form-group"><label>الرمز الرئيسي</label><input type="password" id="recMasterPin" inputmode="numeric" placeholder="••••" /></div>
+      <div id="recResult" style="display:none;margin-top:14px;background:var(--success-l);color:var(--success);border-radius:10px;padding:14px;font-size:13px;line-height:1.9"></div>
+      <div id="recError" style="display:none;margin-top:10px;color:var(--error);font-size:13px"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="closeModal('adminRecoveryModal')">إغلاق</button>
+      <button class="btn-primary" id="recSubmitBtn" onclick="submitAdminRecovery()">إنشاء كلمة مرور مؤقتة</button>
     </div>
   </div>
 </div>
