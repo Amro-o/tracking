@@ -13,6 +13,7 @@
     "@sparticuz/chromium": "^127.0.0",
     "@supabase/supabase-js": "^2.49.4",
     "@umalqura/core": "^0.0.7",
+    "bcryptjs": "^3.0.3",
     "compression": "^1.7.4",
     "cors": "^2.8.5",
     "exceljs": "^4.4.0",
@@ -30,11 +31,6 @@
   "engines": {
     "node": ">=18.0.0"
   },
-  "keywords": [
-    "attendance",
-    "quran",
-    "school",
-    "arabic"
-  ],
+  "keywords": ["attendance", "quran", "school", "arabic"],
   "license": "MIT"
 }
