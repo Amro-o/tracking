@@ -9,6 +9,9 @@
 const express    = require('express');
 const path       = require('path');
 const fs         = require('fs');
+const crypto     = require('crypto');
+let bcrypt;
+try { bcrypt = require('bcryptjs'); } catch(e) { bcrypt = null; console.error('[auth] تحذير: حزمة bcryptjs غير مثبتة — كلمات المرور ستُخزّن بدون تشفير! للتثبيت: npm install bcryptjs'); }
 let XLSX; try { XLSX = require('xlsx-js-style'); } catch(e) { XLSX = require('xlsx'); }
 const ExcelJS = require('exceljs');
 const PDFDocument= require('pdfkit');
@@ -57,8 +60,9 @@ const DEFAULT_DB = {
   waLog:       [],
   waDismissed: [],
   admissionRequests: [],
+  sessions: [],
   accounts: [
-    { id: 'admin', name: 'المدير', username: 'admin', password: '1234', role: 'admin', assignedClasses: [] }
+    { id: 'admin', name: 'المدير', username: 'admin', password: hashPassword('1234'), role: 'admin', assignedClasses: [] }
   ],
   settings: {
     pin: '1234',
@@ -132,7 +136,7 @@ async function _initCache() {
     if (!_cache.accounts.find(a => a.role === 'admin')) {
       _cache.accounts.unshift({
         id: 'admin', name: 'المدير', username: 'admin',
-        password: _cache.settings.pin || '1234', role: 'admin', assignedClasses: []
+        password: hashPassword(_cache.settings.pin || '1234'), role: 'admin', assignedClasses: []
       });
       await _supabaseWriteAll(_cache);
     }
@@ -177,6 +181,103 @@ function saveDB(fn) {
   fn(db);
   writeDB(db);
 }
+
+// ══════════════════════════════════════════════════════════════
+//  المصادقة — تشفير كلمات المرور، جلسات، الحد من محاولات الدخول
+// ══════════════════════════════════════════════════════════════
+
+// ── تشفير كلمات المرور (bcrypt) مع دعم ترقية الحسابات القديمة تلقائياً ──
+function hashPassword(plain) {
+  if (!bcrypt) return plain; // احتياطي فقط إن لم تُثبَّت الحزمة (غير آمن — يُطبع تحذير عند بدء التشغيل)
+  return bcrypt.hashSync(String(plain), 10);
+}
+function isHashed(pw) { return typeof pw === 'string' && /^\$2[aby]?\$/.test(pw); }
+function verifyPassword(plain, stored) {
+  if (!stored) return false;
+  if (isHashed(stored)) {
+    return bcrypt ? bcrypt.compareSync(String(plain), stored) : false;
+  }
+  // كلمة مرور قديمة غير مشفّرة — مقارنة مباشرة (سيُرقّى الحساب تلقائياً عند نجاح الدخول)
+  return String(plain) === String(stored);
+}
+
+// ── جلسات الدخول (رموز عشوائية آمنة، صالحة لمدة محددة) ──
+const SESSION_TTL_MS = 14 * 24 * 60 * 60 * 1000; // 14 يوماً
+function createSession(accountId, role) {
+  const token = crypto.randomBytes(32).toString('hex');
+  const now = Date.now();
+  saveDB(db => {
+    if (!db.sessions) db.sessions = [];
+    // تنظيف الجلسات المنتهية بأي عملية دخول جديدة (صيانة تلقائية خفيفة)
+    db.sessions = db.sessions.filter(s => s.expiresAt > now);
+    db.sessions.push({ token, accountId, role, createdAt: now, expiresAt: now + SESSION_TTL_MS });
+  });
+  return token;
+}
+function findSession(token) {
+  if (!token) return null;
+  const db = readDB();
+  const s = (db.sessions || []).find(s => s.token === token);
+  if (!s) return null;
+  if (s.expiresAt < Date.now()) return null;
+  return s;
+}
+function revokeSession(token) {
+  saveDB(db => { db.sessions = (db.sessions || []).filter(s => s.token !== token); });
+}
+function revokeAllSessionsForAccount(accountId) {
+  saveDB(db => { db.sessions = (db.sessions || []).filter(s => s.accountId !== accountId); });
+}
+function extractToken(req) {
+  const h = req.headers.authorization || '';
+  if (h.startsWith('Bearer ')) return h.slice(7).trim();
+  return req.query.token || null;
+}
+
+// ── Middleware: يتطلب جلسة صالحة، يُرفق req.account ──
+function requireAuth(req, res, next) {
+  const token = extractToken(req);
+  const session = findSession(token);
+  if (!session) return res.status(401).json({ error: 'الجلسة غير صالحة أو منتهية، يرجى تسجيل الدخول مجدداً', sessionExpired: true });
+  const db = readDB();
+  const account = db.accounts.find(a => a.id === session.accountId);
+  if (!account) return res.status(401).json({ error: 'الحساب غير موجود', sessionExpired: true });
+  req.account = account;
+  req.sessionToken = token;
+  next();
+}
+// ── Middleware: يتطلب أحد الأدوار المحددة (يُستدعى بعد requireAuth) ──
+function requireRole(...roles) {
+  return (req, res, next) => {
+    if (!req.account || !roles.includes(req.account.role)) {
+      return res.status(403).json({ error: 'ليست لديك صلاحية للقيام بهذا الإجراء' });
+    }
+    next();
+  };
+}
+
+// ── حد المحاولات الفاشلة لتسجيل الدخول (حماية من التخمين المتكرر) ──
+const _loginAttempts = new Map(); // key: username → { count, lockedUntil }
+const LOGIN_MAX_ATTEMPTS = 5;
+const LOGIN_LOCKOUT_MS   = 15 * 60 * 1000; // 15 دقيقة
+function checkLoginLock(username) {
+  const rec = _loginAttempts.get(username);
+  if (!rec) return { locked: false };
+  if (rec.lockedUntil && rec.lockedUntil > Date.now()) {
+    return { locked: true, retryAfterSec: Math.ceil((rec.lockedUntil - Date.now()) / 1000) };
+  }
+  return { locked: false };
+}
+function recordLoginFailure(username) {
+  const rec = _loginAttempts.get(username) || { count: 0, lockedUntil: 0 };
+  rec.count += 1;
+  if (rec.count >= LOGIN_MAX_ATTEMPTS) {
+    rec.lockedUntil = Date.now() + LOGIN_LOCKOUT_MS;
+    rec.count = 0;
+  }
+  _loginAttempts.set(username, rec);
+}
+function clearLoginFailures(username) { _loginAttempts.delete(username); }
 
 function newId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 
@@ -867,56 +968,103 @@ function ssePushWaCount() {
 }
 
 
-app.get('/api/debug/accounts', (req, res) => {
-  const db = readDB();
-  res.json(db.accounts.map(a => ({ id: a.id, username: a.username, role: a.role, name: a.name })));
-});
-
-// ── Force-create/reset admin account ─────────────────────
-app.get('/api/debug/reset-admin', (req, res) => {
-  const db = readDB();
-  const pin = db.settings.pin || '1234';
-  db.accounts = db.accounts.filter(a => a.id !== 'admin');
-  db.accounts.unshift({ id:'admin', name:'المدير', username:'admin', password: pin, role:'admin', assignedClasses:[] });
-  writeDB(db);
-  res.json({ ok: true, username: 'admin', password: pin });
-});
-
 // ════════════════════════════════════════════════════════
 //  1. المصادقة
 // ════════════════════════════════════════════════════════
 app.post('/api/auth/verify', (req, res) => {
   const { pin, username, password } = req.body;
   const db = readDB();
-  console.log('[auth] attempt:', { username, password, accounts: db.accounts.map(a=>({u:a.username,p:a.password})) });
 
   // Legacy PIN-only login → maps to admin account
   if (pin !== undefined && username === undefined) {
+    const lock = checkLoginLock('__legacy_pin__');
+    if (lock.locked) return res.json({ valid:false, locked:true, retryAfterSec:lock.retryAfterSec, error:`محاولات كثيرة فاشلة. حاول مجدداً بعد ${Math.ceil(lock.retryAfterSec/60)} دقيقة` });
     const valid = String(pin) === String(db.settings.pin || '1234');
     if (valid) {
+      clearLoginFailures('__legacy_pin__');
       const admin = db.accounts.find(a => a.role === 'admin') || { id:'admin', name:'المدير', role:'admin', assignedClasses:[] };
-      return res.json({ valid: true, role:'admin', userId: admin.id, name: admin.name, assignedClasses: [], teacherId: admin.teacherId || null });
+      const token = createSession(admin.id, 'admin');
+      return res.json({ valid: true, token, role:'admin', userId: admin.id, name: admin.name, assignedClasses: [], teacherId: admin.teacherId || null });
     }
+    recordLoginFailure('__legacy_pin__');
     return res.json({ valid: false });
   }
 
   // Username + password login
-  const user = (db.accounts || []).find(a =>
-    a.username === (username||'').trim() &&
-    a.password === String(password||pin||'')
-  );
-  console.log('[auth] result:', user ? 'FOUND' : 'NOT FOUND');
-  if (user) {
-    return res.json({ valid: true, role: user.role, userId: user.id, name: user.name, assignedClasses: user.assignedClasses || [], teacherId: user.teacherId || null });
+  const uname = (username||'').trim();
+  const lock = checkLoginLock(uname);
+  if (lock.locked) {
+    return res.json({ valid:false, locked:true, retryAfterSec:lock.retryAfterSec, error:`محاولات دخول كثيرة فاشلة. حاول مجدداً بعد ${Math.ceil(lock.retryAfterSec/60)} دقيقة` });
   }
-  res.json({ valid: false });
+
+  const user = (db.accounts || []).find(a => a.username === uname);
+  const ok = user && verifyPassword(password||pin||'', user.password);
+
+  if (!ok) {
+    recordLoginFailure(uname);
+    return res.json({ valid: false });
+  }
+
+  clearLoginFailures(uname);
+  // ترقية شفافة: إن كانت كلمة المرور المخزّنة قديمة (غير مشفّرة) نُشفّرها الآن
+  if (!isHashed(user.password)) {
+    saveDB(d => { const a = d.accounts.find(x => x.id === user.id); if (a) a.password = hashPassword(password); });
+  }
+  const token = createSession(user.id, user.role);
+  res.json({ valid: true, token, role: user.role, userId: user.id, name: user.name, assignedClasses: user.assignedClasses || [], teacherId: user.teacherId || null });
+});
+
+// تسجيل الخروج — يُبطل رمز الجلسة الحالي على الخادم
+app.post('/api/auth/logout', requireAuth, (req, res) => {
+  revokeSession(req.sessionToken);
+  res.json({ ok: true });
+});
+
+// تغيير كلمة المرور الخاصة بالمستخدم الحالي (أي دور — لا يتطلب صلاحية مدير)
+app.post('/api/auth/change-password', requireAuth, (req, res) => {
+  const { oldPassword, newPassword } = req.body;
+  if (!oldPassword || !newPassword) return res.status(400).json({ error: 'بيانات ناقصة' });
+  if (String(newPassword).length < 8) return res.status(400).json({ error: 'كلمة المرور الجديدة يجب ألا تقل عن 8 أحرف' });
+  if (!verifyPassword(oldPassword, req.account.password)) {
+    return res.status(401).json({ error: 'كلمة المرور الحالية غير صحيحة' });
+  }
+  saveDB(db => {
+    const a = db.accounts.find(x => x.id === req.account.id);
+    if (a) a.password = hashPassword(newPassword);
+  });
+  // إبطال كل الجلسات الأخرى لهذا الحساب (لا تُبطل الجلسة الحالية حتى لا يُقفَل المستخدم فوراً)
+  saveDB(db => { db.sessions = (db.sessions||[]).filter(s => s.accountId !== req.account.id || s.token === req.sessionToken); });
+  res.json({ ok: true });
+});
+
+// استعادة الوصول للمدير (يتطلب معرفة الرمز السري الرئيسي في الإعدادات) — بديل آمن عن أي مسار مفتوح
+app.post('/api/auth/recover-admin', (req, res) => {
+  const { masterPin } = req.body;
+  const db = readDB();
+  const lock = checkLoginLock('__recover_admin__');
+  if (lock.locked) return res.status(429).json({ error:`محاولات كثيرة. حاول بعد ${Math.ceil(lock.retryAfterSec/60)} دقيقة` });
+  if (!masterPin || String(masterPin) !== String(db.settings.pin || '')) {
+    recordLoginFailure('__recover_admin__');
+    return res.status(401).json({ error: 'الرمز الرئيسي غير صحيح' });
+  }
+  clearLoginFailures('__recover_admin__');
+  const newPassword = crypto.randomBytes(4).toString('hex'); // كلمة مرور مؤقتة عشوائية
+  saveDB(d => {
+    let admin = d.accounts.find(a => a.role === 'admin');
+    if (!admin) {
+      admin = { id:'admin', name:'المدير', username:'admin', role:'admin', assignedClasses:[] };
+      d.accounts.unshift(admin);
+    }
+    admin.password = hashPassword(newPassword);
+  });
+  res.json({ ok:true, username: db.accounts.find(a=>a.role==='admin')?.username || 'admin', temporaryPassword: newPassword });
 });
 
 // ════════════════════════════════════════════════════════
 //  الحسابات — Accounts (admin only)
 // ════════════════════════════════════════════════════════
 // تصدير الحسابات (مع كلمات المرور — للمدير فقط)
-app.get('/api/accounts/export', async (req, res) => {
+app.get('/api/accounts/export', requireAuth, requireRole('admin'), async (req, res) => {
   try {
     const db   = readDB();
     const wb   = new ExcelJS.Workbook();
@@ -924,7 +1072,7 @@ app.get('/api/accounts/export', async (req, res) => {
     const school = db.settings.schoolName || 'حضور الحلقات';
 
     ws.columns = [
-      {width:6}, {width:22}, {width:20}, {width:18}, {width:12}, {width:28}
+      {width:6}, {width:22}, {width:20}, {width:14}, {width:12}, {width:28}
     ];
 
     // Title rows
@@ -950,7 +1098,8 @@ app.get('/api/accounts/export', async (req, res) => {
       dataCell(ws.getCell(dr,1), idx+1, even, 'center');
       dataCell(ws.getCell(dr,2), a.name||'—', even, 'right');
       dataCell(ws.getCell(dr,3), a.username||'—', even, 'center');
-      dataCell(ws.getCell(dr,4), a.password||'—', even, 'center');
+      // كلمات المرور مشفّرة ولا يمكن استعادتها — لا تُصدَّر لأي سبب أمنيًا
+      dataCell(ws.getCell(dr,4), 'محمية 🔒', even, 'center');
       // Role with color badge
       const roleColors = { admin:C.navy, moderator:C.amberBg, teacher:C.greenBg };
       const roleFg     = { admin:C.white, moderator:C.amberFg, teacher:C.greenFg };
@@ -976,9 +1125,11 @@ app.get('/api/accounts/export', async (req, res) => {
 });
 
 // استيراد الحسابات
-app.post('/api/accounts/import', (req, res) => {
+app.post('/api/accounts/import', requireAuth, requireRole('admin'), (req, res) => {
   const { accounts, mode } = req.body; // mode: 'merge' | 'replace'
   if (!Array.isArray(accounts)) return res.status(400).json({ error: 'بيانات غير صالحة' });
+  // تشفير أي كلمات مرور نصّية واردة في الاستيراد
+  accounts.forEach(a => { if (a.password && !isHashed(a.password)) a.password = hashPassword(a.password); });
   saveDB(db => {
     if (mode === 'replace') {
       // Keep existing admin if import has none
@@ -1000,36 +1151,42 @@ app.post('/api/accounts/import', (req, res) => {
   res.json({ ok: true, count: accounts.length });
 });
 
-app.get('/api/accounts', (req, res) => {
+app.get('/api/accounts', requireAuth, requireRole('admin'), (req, res) => {
   const db = readDB();
   // Never send passwords to the client
   res.json((db.accounts || []).map(a => ({ ...a, password: undefined })));
 });
 
 // تحديث خفيف لجلسة حساب واحد (لالتقاط تغييرات كربط ملف المعلم دون تسجيل خروج/دخول)
-app.get('/api/accounts/:id/self', (req, res) => {
+// مسموح فقط لصاحب الحساب نفسه أو للمدير
+app.get('/api/accounts/:id/self', requireAuth, (req, res) => {
+  if (req.account.id !== req.params.id && req.account.role !== 'admin') {
+    return res.status(403).json({ error: 'غير مصرح' });
+  }
   const db  = readDB();
   const acc = db.accounts.find(a => a.id === req.params.id);
   if (!acc) return res.status(404).json({ error: 'الحساب غير موجود' });
   res.json({ id: acc.id, name: acc.name, role: acc.role, assignedClasses: acc.assignedClasses || [], teacherId: acc.teacherId || null });
 });
 
-app.post('/api/accounts', (req, res) => {
+app.post('/api/accounts', requireAuth, requireRole('admin'), (req, res) => {
   const { name, username, password, role, assignedClasses, teacherId } = req.body;
   if (!name || !username || !password || !role) return res.status(400).json({ error: 'بيانات ناقصة' });
+  if (String(password).length < 8) return res.status(400).json({ error: 'كلمة المرور يجب ألا تقل عن 8 أحرف' });
   const db = readDB();
   if (db.accounts.find(a => a.username === username)) return res.status(400).json({ error: 'اسم المستخدم مستخدم بالفعل' });
-  const account = { id: newId(), name, username, password, role, assignedClasses: assignedClasses || [], teacherId: teacherId || null };
+  const account = { id: newId(), name, username, password: hashPassword(password), role, assignedClasses: assignedClasses || [], teacherId: teacherId || null };
   db.accounts.push(account);
   writeDB(db);
   res.json({ id: account.id });
 });
 
-app.put('/api/accounts/:id', (req, res) => {
+app.put('/api/accounts/:id', requireAuth, requireRole('admin'), (req, res) => {
   const db = readDB();
   const i = db.accounts.findIndex(a => a.id === req.params.id);
   if (i < 0) return res.status(404).json({ error: 'الحساب غير موجود' });
   const { name, username, password, role, assignedClasses, teacherId } = req.body;
+  if (password && String(password).length < 8) return res.status(400).json({ error: 'كلمة المرور يجب ألا تقل عن 8 أحرف' });
   // Check username uniqueness
   if (username && db.accounts.some((a, idx) => a.username === username && idx !== i))
     return res.status(400).json({ error: 'اسم المستخدم مستخدم بالفعل' });
@@ -1037,22 +1194,25 @@ app.put('/api/accounts/:id', (req, res) => {
     ...db.accounts[i],
     ...(name && { name }),
     ...(username && { username }),
-    ...(password && { password }),
+    ...(password && { password: hashPassword(password) }),
     ...(role && { role }),
     ...(assignedClasses !== undefined && { assignedClasses }),
     ...(teacherId !== undefined && { teacherId: teacherId || null }),
   };
   writeDB(db);
+  // تغيير كلمة المرور أو الدور يُبطل كل جلسات هذا الحساب الأخرى فوراً (أمان إضافي)
+  if (password || role) revokeAllSessionsForAccount(req.params.id);
   res.json({ ok: true });
 });
 
-app.delete('/api/accounts/:id', (req, res) => {
+app.delete('/api/accounts/:id', requireAuth, requireRole('admin'), (req, res) => {
   const db = readDB();
   const account = db.accounts.find(a => a.id === req.params.id);
   if (account?.role === 'admin' && db.accounts.filter(a => a.role === 'admin').length <= 1)
     return res.status(400).json({ error: 'لا يمكن حذف آخر حساب مدير' });
   db.accounts = db.accounts.filter(a => a.id !== req.params.id);
   writeDB(db);
+  revokeAllSessionsForAccount(req.params.id);
   res.json({ ok: true });
 });
 
@@ -1333,7 +1493,7 @@ app.post('/api/teachers/:id/photo', upload.single('photo'), async (req, res) => 
 });
 
 // صورة الحساب (مدير / مشرف)
-app.post('/api/accounts/:id/photo', upload.single('photo'), async (req, res) => {
+app.post('/api/accounts/:id/photo', requireAuth, requireRole('admin'), upload.single('photo'), async (req, res) => {
   if (!req.file) return res.json({ ok:false, error:'لم يتم استلام الملف' });
   try {
     const url = await uploadToSupabase(req.file.buffer, req.file.mimetype, req.file.originalname);
@@ -1696,20 +1856,6 @@ app.delete('/api/holidays/:date', (req, res) => {
 });
 
 
-// ── تشخيص: التحقق من تحميل مكتبة أم القرى وصحة التاريخ الهجري ──
-app.get('/api/debug/hijri', (req, res) => {
-  const today = nowDate();
-  res.json({
-    umalquraLoaded: !!UmAlQuraLib,
-    serverTime: new Date().toISOString(),
-    timezoneUsed: _TZ,
-    todayGregorian: today,
-    todayHijri: formatHijri(today),
-    todayHijriRaw: toHijri(today),
-    fallbackHijriRaw: _toHijriFallback(+today.split('-')[0], +today.split('-')[1], +today.split('-')[2]),
-  });
-});
-
 // ════════════════════════════════════════════════════════
 //  7. الحضور
 // ════════════════════════════════════════════════════════
@@ -1754,7 +1900,7 @@ app.post('/api/attendance/batch', (req, res) => {
   const waToken = db.settings.whatsappApiKey;
   const adminPhone = db.settings.adminPhone;
   if (waToken && adminPhone) {
-    const today = formatHijri(nowDate());
+    const today = new Date().toLocaleDateString('ar-SA-u-ca-islamic', { day:'numeric', month:'long', year:'numeric' });
     const waMsg = `📋 *تسجيل حضور جديد*\n\n👨‍🏫 المعلم: ${teacher}\n📚 الحلقة: ${clsName}\n📅 ${today}\n\n✅ حاضر: ${present}\n❌ غائب: ${absent}${late ? `\n⏰ متأخر: ${late}` : ''}\n👥 الإجمالي: ${records.length}`;
     fonnteRequest(waToken, adminPhone, waMsg).catch(() => {});
   }
