@@ -96,7 +96,7 @@ function renderTeacherList() {
       ${avatarHtml}
       <div class="list-card-body">
         <div class="list-card-name">${safeName}</div>
-        <div class="list-card-sub">${t.subject||'معلم'} ${t.teacherId ? '· #'+t.teacherId : ''}${t.attendancePin ? ` · 🔑 ${t.attendancePin}` : ' · <span style="color:var(--warn)">لا يوجد رقم سري QR</span>'}</div>
+        <div class="list-card-sub">${t.subject||'معلم'} ${t.teacherId ? '· #'+t.teacherId : ''}${t.attendancePin ? ` · 🔑 ${t.attendancePin}` : ' · <span style="color:var(--warn)">لا يوجد رقم سري QR</span>'}${t.checkoutTime ? ` · ⏰ انصراف ${t.checkoutTime}` : ''}</div>
         <div style="margin-top:4px">
           <span class="checkin-status ${statusClass}">${statusLabel}</span>
           ${log && log.checkIn ? `<span style="font-size:11px;color:var(--text2);margin-right:6px;font-family:var(--mono)">${log.checkIn}${log.checkOut?' — '+log.checkOut:''}</span>` : ''}
@@ -123,6 +123,7 @@ function openTeacherModal(id=null) {
     document.getElementById('fTeacherSubject').value = t.subject||'';
     document.getElementById('fTeacherPhone').value   = t.phone||'';
     document.getElementById('fTeacherPin').value     = t.attendancePin||'';
+    document.getElementById('fTeacherCheckoutTime').value = t.checkoutTime||'';
     const prev = document.getElementById('fTeacherPhotoPreview');
     const placeholder = document.getElementById('fTeacherPhotoPlaceholder');
     if (t.photo) {
@@ -134,7 +135,7 @@ function openTeacherModal(id=null) {
     }
   } else {
     document.getElementById('teacherModalTitle').textContent = 'إضافة معلم/مشرف';
-    ['teacherId','fTeacherId','fTeacherName','fTeacherSubject','fTeacherPhone','fTeacherPin'].forEach(i=>document.getElementById(i).value='');
+    ['teacherId','fTeacherId','fTeacherName','fTeacherSubject','fTeacherPhone','fTeacherPin','fTeacherCheckoutTime'].forEach(i=>document.getElementById(i).value='');
     const prev = document.getElementById('fTeacherPhotoPreview');
     prev.classList.add('hidden');
     const placeholder = document.getElementById('fTeacherPhotoPlaceholder');
@@ -172,7 +173,7 @@ async function saveTeacher() {
   const id   = document.getElementById('teacherId').value;
   const pin  = document.getElementById('fTeacherPin').value.trim();
   if (pin && !/^\d{4}$/.test(pin)) return toast('الرقم السري يجب أن يكون 4 أرقام فقط');
-  const data = { teacherId:document.getElementById('fTeacherId').value.trim(), name:document.getElementById('fTeacherName').value.trim(), subject:document.getElementById('fTeacherSubject').value.trim(), phone:document.getElementById('fTeacherPhone').value.trim(), attendancePin: pin || null };
+  const data = { teacherId:document.getElementById('fTeacherId').value.trim(), name:document.getElementById('fTeacherName').value.trim(), subject:document.getElementById('fTeacherSubject').value.trim(), phone:document.getElementById('fTeacherPhone').value.trim(), attendancePin: pin || null, checkoutTime: document.getElementById('fTeacherCheckoutTime').value || null };
   if (!data.name) return toast('الاسم مطلوب');
   let savedId = id;
   if (id) {
@@ -315,6 +316,238 @@ async function saveAutoCheckoutSettings() {
   const time    = document.getElementById('autoCheckoutTime').value || '16:00';
   await apiFetch('/settings', { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ autoCheckoutEnabled: enabled, autoCheckoutTime: time }) });
   toast(enabled ? `تم تفعيل الانصراف التلقائي الساعة ${time}` : 'تم إيقاف الانصراف التلقائي');
+}
+
+// ── استيراد سجلات حضور سابقة للمعلمين من Excel/CSV ──────
+const TL_FIELD_ALIASES = {
+  teacherName: ['اسم المعلم','الاسم','اسم المعلم/المشرف','المعلم','name','teacher name','teacher_name'],
+  date:        ['التاريخ','تاريخ','date'],
+  checkIn:     ['وقت الحضور','الحضور','دخول','check in','checkin','time in'],
+  checkOut:    ['وقت الانصراف','الانصراف','خروج','check out','checkout','time out'],
+};
+
+let _tlImport = { headers:[], rows:[], teachers:[], mapping:{}, nameMatch:{} };
+
+function _tlNormName(s) {
+  return String(s||'')
+    .replace(/[\u064B-\u065F\u0670]/g,'')
+    .replace(/[إأآا]/g,'ا').replace(/ى/g,'ي').replace(/ة/g,'ه')
+    .replace(/\s+/g,' ').trim().toLowerCase();
+}
+
+function _tlAutoDetectMapping(headers) {
+  const mapping = {};
+  for (const [field, aliases] of Object.entries(TL_FIELD_ALIASES)) {
+    const match = headers.find(h => aliases.some(a => h.trim().toLowerCase() === a.toLowerCase()));
+    if (match) mapping[field] = match;
+  }
+  return mapping;
+}
+
+function openTeacherLogImportModal() {
+  resetTeacherLogImport();
+  document.getElementById('tlImportModal').classList.remove('hidden');
+}
+
+function closeTeacherLogImportModal() {
+  document.getElementById('tlImportModal').classList.add('hidden');
+  resetTeacherLogImport();
+}
+
+function resetTeacherLogImport() {
+  _tlImport = { headers:[], rows:[], teachers:[], mapping:{}, nameMatch:{} };
+  document.getElementById('tlImportStep1').classList.remove('hidden');
+  document.getElementById('tlImportStep2').classList.add('hidden');
+  document.getElementById('tlImportStep3').classList.add('hidden');
+  document.getElementById('tlImportStep4').classList.add('hidden');
+  document.getElementById('tlImportNextBtn').classList.add('hidden');
+  document.getElementById('tlImportConfirmBtn').classList.add('hidden');
+  const inp = document.getElementById('tlImportFile');
+  if (inp) {
+    const fresh = inp.cloneNode(true);
+    fresh.value = '';
+    inp.parentNode.replaceChild(fresh, inp);
+    fresh.addEventListener('change', handleTeacherLogImportFile);
+  }
+  _setupTlImportDragDrop();
+}
+
+function _setupTlImportDragDrop() {
+  const zone = document.getElementById('tlImportDropZone');
+  if (!zone || zone._dd) return;
+  zone._dd = true;
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag-over'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault(); zone.classList.remove('drag-over');
+    const file = e.dataTransfer.files[0];
+    if (file) _processTeacherLogImportFile(file);
+  });
+}
+
+async function handleTeacherLogImportFile() {
+  const file = document.getElementById('tlImportFile').files[0];
+  if (file) _processTeacherLogImportFile(file);
+}
+
+async function _processTeacherLogImportFile(file) {
+  const info = document.getElementById('tlImportFileInfo');
+  document.getElementById('tlImportStep1').classList.add('hidden');
+  document.getElementById('tlImportStep2').classList.remove('hidden');
+  if (info) info.textContent = `📄 ${file.name} — جارٍ التحليل…`;
+
+  let data;
+  try {
+    const fd = new FormData(); fd.append('file', file);
+    const res = await fetch(`${API}/teacher-log/import-preview`, { method:'POST', body:fd });
+    if (!res.ok) throw new Error(`خطأ في الخادم (${res.status})`);
+    data = await res.json();
+  } catch(e) {
+    toast('تعذر قراءة الملف: ' + (e.message||''));
+    resetTeacherLogImport(); return;
+  }
+  if (!data.ok) { toast(data.error || 'فشل قراءة الملف'); resetTeacherLogImport(); return; }
+
+  _tlImport.headers  = data.headers;
+  _tlImport.rows     = data.rows;
+  _tlImport.teachers = data.teachers || [];
+  _tlImport.mapping  = _tlAutoDetectMapping(data.headers);
+
+  if (info) info.textContent = `📄 ${file.name} — ${data.total} صف تم قراءتها${data.total > data.rows.length ? ` (سيتم استيراد أول ${data.rows.length})` : ''}`;
+  _renderTlMappingGrid();
+  _renderTlImportPreview();
+  document.getElementById('tlImportNextBtn').classList.remove('hidden');
+}
+
+function _renderTlMappingGrid() {
+  const grid = document.getElementById('tlImportMappingGrid');
+  if (!grid) return;
+  const fieldLabels = { teacherName:'اسم المعلم *', date:'التاريخ *', checkIn:'وقت الحضور *', checkOut:'وقت الانصراف' };
+  grid.innerHTML = Object.entries(fieldLabels).map(([field, label]) => `
+    <div class="import-map-row">
+      <div class="import-map-field">${label}</div>
+      <div class="import-map-arrow">←</div>
+      <select class="import-map-select" data-field="${field}" onchange="_updateTlMapping(this)">
+        <option value="">— غير محدد —</option>
+        ${_tlImport.headers.map(h =>
+          `<option value="${h}" ${_tlImport.mapping[field]===h?'selected':''}>${h}</option>`
+        ).join('')}
+      </select>
+    </div>
+  `).join('');
+}
+
+function _updateTlMapping(sel) {
+  _tlImport.mapping[sel.dataset.field] = sel.value || undefined;
+  _renderTlImportPreview();
+}
+
+function _renderTlImportPreview() {
+  const tbl = document.getElementById('tlImportPreviewTable');
+  if (!tbl || _tlImport.rows.length === 0) return;
+  const m = _tlImport.mapping;
+  const preview = _tlImport.rows.slice(0, 5);
+  tbl.innerHTML = `
+    <thead><tr><th>اسم المعلم</th><th>التاريخ</th><th>وقت الحضور</th><th>وقت الانصراف</th></tr></thead>
+    <tbody>${preview.map(row => `<tr>
+      <td>${m.teacherName ? (row[m.teacherName]||'—') : '<span style="color:var(--error)">غير محدد</span>'}</td>
+      <td>${m.date        ? (row[m.date]||'—')        : '<span style="color:var(--error)">غير محدد</span>'}</td>
+      <td>${m.checkIn     ? (row[m.checkIn]||'—')     : '<span style="color:var(--error)">غير محدد</span>'}</td>
+      <td>${m.checkOut    ? (row[m.checkOut]||'—')    : '—'}</td>
+    </tr>`).join('')}</tbody>
+  `;
+  const note = document.getElementById('tlImportMappingNote');
+  const missing = ['teacherName','date','checkIn'].filter(f => !m[f]);
+  if (note) note.textContent = missing.length ? 'يرجى تحديد أعمدة اسم المعلم والتاريخ ووقت الحضور قبل المتابعة.' : '';
+}
+
+function goToTeacherMatchStep() {
+  const m = _tlImport.mapping;
+  if (!m.teacherName || !m.date || !m.checkIn) return toast('يرجى تحديد أعمدة اسم المعلم والتاريخ ووقت الحضور');
+
+  // اجمع كل الأسماء الفريدة في عمود المعلم عبر كل الصفوف
+  const namesSet = new Set();
+  _tlImport.rows.forEach(row => {
+    const raw = String(row[m.teacherName]||'').trim();
+    if (raw) namesSet.add(raw);
+  });
+  const uniqueNames = [...namesSet];
+  document.getElementById('tlImportUniqueCount').textContent = uniqueNames.length;
+
+  // حاول مطابقة كل اسم تلقائياً مع معلم موجود بالاسم (بعد تطبيع النص)
+  uniqueNames.forEach(raw => {
+    const norm = _tlNormName(raw);
+    const found = _tlImport.teachers.find(t => _tlNormName(t.name) === norm);
+    _tlImport.nameMatch[raw] = found ? found.id : '';
+  });
+
+  const grid = document.getElementById('tlImportMatchGrid');
+  grid.innerHTML = uniqueNames.map(raw => {
+    const matched = _tlImport.nameMatch[raw];
+    return `
+    <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">
+      <div style="flex:1;font-size:13px;font-weight:600">${raw}</div>
+      <div style="color:var(--text2)">←</div>
+      <select style="flex:1;font-size:13px" onchange="_tlImport.nameMatch[${JSON.stringify(raw)}] = this.value">
+        <option value="" ${!matched?'selected':''}>— تجاهل هذا الاسم —</option>
+        ${_tlImport.teachers.map(t => `<option value="${t.id}" ${matched===t.id?'selected':''}>${t.name}</option>`).join('')}
+      </select>
+    </div>`;
+  }).join('');
+
+  document.getElementById('tlImportStep2').classList.add('hidden');
+  document.getElementById('tlImportStep3').classList.remove('hidden');
+  document.getElementById('tlImportNextBtn').classList.add('hidden');
+  document.getElementById('tlImportConfirmBtn').classList.remove('hidden');
+}
+
+async function confirmTeacherLogImport() {
+  const m = _tlImport.mapping;
+  const entries = [];
+  _tlImport.rows.forEach(row => {
+    const rawName = String(row[m.teacherName]||'').trim();
+    if (!rawName) return;
+    const teacherId = _tlImport.nameMatch[rawName];
+    if (!teacherId) return; // تم تجاهل هذا الاسم
+    const date     = row[m.date];
+    const checkIn  = row[m.checkIn];
+    const checkOut = m.checkOut ? row[m.checkOut] : '';
+    if (!date || !checkIn) return;
+    entries.push({ teacherId, date, checkIn, checkOut });
+  });
+
+  if (!entries.length) return toast('لا توجد صفوف صالحة للاستيراد — تأكد من مطابقة الأسماء');
+
+  const btn = document.getElementById('tlImportConfirmBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'جارٍ الاستيراد…'; }
+
+  const res = await apiFetch('/teacher-log/import-confirm', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ entries }),
+  });
+
+  document.getElementById('tlImportStep3').classList.add('hidden');
+  document.getElementById('tlImportStep4').classList.remove('hidden');
+  document.getElementById('tlImportConfirmBtn').classList.add('hidden');
+  document.getElementById('tlImportFooter').querySelector('.btn-secondary').textContent = 'إغلاق';
+
+  const result = document.getElementById('tlImportResult');
+  if (res?.ok) {
+    result.innerHTML = `
+      <div class="import-success">
+        <div class="import-success-icon"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-left:3px;flex-shrink:0"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div>
+        <div class="import-success-title">تم الاستيراد بنجاح!</div>
+        <div class="import-success-stats">
+          <span class="import-stat green">سجلات جديدة: <strong>${res.added}</strong></span>
+          ${res.updated > 0 ? `<span class="import-stat green">سجلات محدَّثة: <strong>${res.updated}</strong></span>` : ''}
+          ${res.skipped > 0 ? `<span class="import-stat gray">تم تخطّيها: <strong>${res.skipped}</strong></span>` : ''}
+        </div>
+      </div>`;
+    await loadAll(); renderCheckinList(); loadTeacherSummary();
+    toast(`تم استيراد سجلات الحضور (${res.added} جديد، ${res.updated} محدَّث)`);
+  } else {
+    result.innerHTML = `<div style="color:var(--error)">تعذر إتمام الاستيراد${res?.error?': '+res.error:''}</div>`;
+  }
 }
 
 // ── رمز QR لتسجيل الحضور الذاتي ─────────────────────────
