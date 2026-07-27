@@ -1641,149 +1641,30 @@ app.post('/api/teacher-log/pin-checkin', (req, res) => {
   return res.json({ ok:true, action:'checkout', teacherName:teacher.name, time, duration, checkIn:entry.checkIn });
 });
 
-// ════════════════════════════════════════════════════════
-//  استيراد سجلات حضور سابقة للمعلمين من ملف Excel/CSV
-// ════════════════════════════════════════════════════════
-
-// تحويل قيمة تاريخ مرنة (نص أو رقم تسلسلي من Excel) إلى صيغة YYYY-MM-DD
-function parseFlexibleDate(val) {
-  if (val === null || val === undefined || val === '') return null;
-  if (typeof val === 'number') {
-    try {
-      const d = XLSX.SSF.parse_date_code(val);
-      if (d && d.y) return `${d.y}-${String(d.m).padStart(2,'0')}-${String(d.d).padStart(2,'0')}`;
-    } catch(e) {}
-    return null;
-  }
-  const s = String(val).trim();
-  if (!s) return null;
-  // 2024-01-15 أو 2024/01/15
-  let m = s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);
-  if (m) return `${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`;
-  // 15/01/2024 أو 1-15-2024 (يوم/شهر/سنة على الأغلب في المنطقة العربية)
-  m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
-  if (m) {
-    let [, a, b, y] = m;
-    if (y.length === 2) y = '20' + y;
-    a = +a; b = +b;
-    let day, month;
-    if (a > 12) { day = a; month = b; }
-    else if (b > 12) { day = b; month = a; }
-    else { day = a; month = b; }
-    if (month < 1 || month > 12 || day < 1 || day > 31) return null;
-    return `${y}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
-  }
-  const d = new Date(s);
-  if (!isNaN(d.getTime())) return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-  return null;
-}
-
-// تحويل قيمة وقت مرنة (نص أو كسر عشري من Excel) إلى صيغة HH:MM
-function parseFlexibleTime(val) {
-  if (val === null || val === undefined || val === '') return null;
-  if (typeof val === 'number') {
-    let frac = val;
-    if (frac >= 1) frac = frac - Math.floor(frac); // تاريخ+وقت مدمجان — نأخذ الجزء الكسري فقط
-    if (frac < 0 || frac >= 1) return null;
-    const totalMins = Math.round(frac * 24 * 60) % 1440;
-    return `${String(Math.floor(totalMins/60)).padStart(2,'0')}:${String(totalMins%60).padStart(2,'0')}`;
-  }
-  let s = String(val).trim();
-  if (!s) return null;
-  const isPM = /م|pm/i.test(s) && !/ص|am/i.test(s);
-  const isAM = /ص|am/i.test(s);
-  s = s.replace(/[صم]|am|pm/ig, '').trim();
-  const m = s.match(/^(\d{1,2}):(\d{2})/);
-  if (!m) return null;
-  let h = +m[1], mm = +m[2];
-  if (isPM && h < 12) h += 12;
-  if (isAM && h === 12) h = 0;
-  if (h > 23 || mm > 59) return null;
-  return `${String(h).padStart(2,'0')}:${String(mm).padStart(2,'0')}`;
-}
-
-// خطوة ١: رفع الملف ومعاينته — يعيد رؤوس الأعمدة وقائمة المعلمين لمطابقتها في الواجهة
-app.post('/api/teacher-log/import-preview', upload.single('file'), (req, res) => {
-  if (!req.file) return res.json({ ok:false, error:'لم يتم استلام الملف — تأكد من اختيار ملف Excel أو CSV' });
-  try {
-    const ext = path.extname(req.file.originalname || '').toLowerCase();
-    let wb;
-    if (req.file.buffer) {
-      wb = ext === '.csv'
-        ? XLSX.read(req.file.buffer.toString('utf8').replace(/^\uFEFF/, ''), { type:'string' })
-        : XLSX.read(req.file.buffer, { type:'buffer' });
-    } else {
-      wb = ext === '.csv'
-        ? XLSX.read(fs.readFileSync(req.file.path, 'utf8'), { type:'string' })
-        : XLSX.readFile(req.file.path);
-      try { fs.unlinkSync(req.file.path); } catch(e){}
-    }
-    const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval:'' });
-    if (!rows.length) return res.json({ ok:false, error:'الملف فارغ أو لا يحتوي على بيانات' });
-    const db = readDB();
-    res.json({
-      ok: true,
-      headers: Object.keys(rows[0]),
-      rows: rows.slice(0, 5000), // سقف عالٍ يكفي لأشهر من سجلات الحضور دون إبطاء المتصفح
-      total: rows.length,
-      teachers: db.teachers.map(t => ({ id:t.id, name:t.name })),
-    });
-  } catch(e) {
-    try { if (req.file && req.file.path) fs.unlinkSync(req.file.path); } catch(_){}
-    res.json({ ok:false, error:'خطأ في قراءة الملف: ' + e.message });
-  }
-});
-
-// خطوة ٢: تأكيد الاستيراد — تستقبل صفوفاً مطابَقة بالفعل (teacherId محدد لكل صف من الواجهة)
-app.post('/api/teacher-log/import-confirm', (req, res) => {
-  const { entries=[] } = req.body;
-  const db = readDB();
-  const validTeacherIds = new Set(db.teachers.map(t=>t.id));
-  let added=0, updated=0, skipped=0;
-  for (const e of entries) {
-    const teacherId = e.teacherId;
-    const date     = parseFlexibleDate(e.date);
-    const checkIn  = parseFlexibleTime(e.checkIn);
-    const checkOut = parseFlexibleTime(e.checkOut);
-    if (!teacherId || !validTeacherIds.has(teacherId) || !date || (!checkIn && !checkOut)) { skipped++; continue; }
-    const existing = db.teacherLog.find(l => l.teacherId===teacherId && l.date===date);
-    if (existing) {
-      if (checkIn)  existing.checkIn  = checkIn;
-      if (checkOut) existing.checkOut = checkOut;
-      updated++;
-    } else {
-      db.teacherLog.push({ id:newId(), teacherId, date, checkIn: checkIn||null, checkOut: checkOut||null });
-      added++;
-    }
-  }
-  writeDB(db);
-  res.json({ ok:true, added, updated, skipped });
-});
-
-// ── تسجيل انصراف تلقائي — لكل معلم وقته الخاص (t.checkoutTime) وإلا الوقت العام من الإعدادات ──
+// ── تسجيل انصراف تلقائي لكل المعلمين في وقت محدد (إن كان مفعّلاً من الإعدادات) ──
+let _lastAutoCheckoutDate = null;
 function startAutoCheckoutScheduler() {
   setInterval(() => {
     try {
       const db = readDB();
       if (!db.settings.autoCheckoutEnabled) return;
-      const defaultTime = db.settings.autoCheckoutTime || '16:00';
+      const targetTime = db.settings.autoCheckoutTime || '16:00';
       const today = nowDate();
       const time  = nowTime();
+      if (time !== targetTime) return;
+      if (_lastAutoCheckoutDate === today) return; // نفّذناها بالفعل اليوم
+      _lastAutoCheckoutDate = today;
 
       let changed = false;
       db.teacherLog.forEach(l => {
-        if (l.date !== today || !l.checkIn || l.checkOut) return;
-        const teacher    = db.teachers.find(t => t.id === l.teacherId);
-        const targetTime = (teacher && teacher.checkoutTime) || defaultTime;
-        // مقارنة نصية كافية لأن الصيغة HH:MM بترميز ثابت الطول — تكافئ المقارنة الزمنية
-        if (time >= targetTime) {
+        if (l.date === today && l.checkIn && !l.checkOut) {
           l.checkOut = targetTime;
           changed = true;
         }
       });
       if (changed) {
         writeDB(db);
-        console.log(`[auto-checkout] تم تسجيل انصراف تلقائي عند الساعة ${time}`);
+        console.log(`[auto-checkout] تم تسجيل انصراف تلقائي للمعلمين الساعة ${targetTime}`);
       }
     } catch (e) {
       console.error('[auto-checkout] error:', e.message);
