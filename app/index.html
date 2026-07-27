@@ -1012,6 +1012,7 @@
         </div>
         <button class="btn-primary" style="font-size:13px;padding:9px 16px;white-space:nowrap" onclick="openTeacherLogImportModal()">استيراد من Excel</button>
       </div>
+      <div id="tlLastImportBanner" class="hidden"></div>
       <div class="search-bar">
         <input type="text" id="checkinSearch" placeholder="🔍 بحث عن معلم…" oninput="renderCheckinList()" />
       </div>
@@ -2301,7 +2302,7 @@
         <div class="import-template-hint">
           <strong><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-left:3px;flex-shrink:0"><path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/></svg> مثال على أعمدة مدعومة:</strong><br/>
           <code>اسم المعلم</code> &nbsp;|&nbsp; <code>التاريخ</code> &nbsp;|&nbsp; <code>وقت الحضور</code> &nbsp;|&nbsp; <code>وقت الانصراف</code>
-          <div style="margin-top:6px;font-size:11px;color:var(--text2)">لا يهم ترتيب الأعمدة أو أسماؤها بالضبط — ستُطابقها في الخطوة التالية.</div>
+          <div style="margin-top:6px;font-size:11px;color:var(--text2)">إن كان ملفك يحتوي على عمود "رقم/معرّف المعلم" فسيُستخدم للربط المباشر والدقيق تلقائياً — بلا حاجة لمطابقة الأسماء يدوياً. لا يهم ترتيب الأعمدة أو أسماؤها بالضبط.</div>
         </div>
       </div>
 
@@ -2311,22 +2312,26 @@
           <div class="import-file-info" id="tlImportFileInfo"></div>
           <button class="btn-secondary" style="font-size:12px" onclick="resetTeacherLogImport()">↩ تغيير الملف</button>
         </div>
-        <h4 class="section-title" style="margin:14px 0 8px">مطابقة الأعمدة</h4>
-        <p class="section-desc">حدد أي عمود في ملفك يقابل كل حقل:</p>
-        <div class="import-mapping-grid" id="tlImportMappingGrid"></div>
-
-        <h4 class="section-title" style="margin:14px 0 8px">معاينة أول 5 صفوف</h4>
-        <div style="overflow-x:auto">
+        <h4 class="section-title" style="margin:14px 0 4px">حدد دور كل عمود</h4>
+        <p class="section-desc">اختر من القائمة أعلى كل عمود ما يمثله — وستظهر لك البيانات الفعلية أسفله للتأكد.</p>
+        <div style="overflow-x:auto;margin-top:10px">
           <table class="import-preview-table" id="tlImportPreviewTable"></table>
         </div>
         <p id="tlImportMappingNote" class="section-desc" style="margin-top:8px;color:var(--warn)"></p>
       </div>
 
-      <!-- الخطوة 3: مطابقة أسماء المعلمين -->
+      <!-- الخطوة 3: مطابقة أسماء المعلمين غير المرتبطة تلقائياً -->
       <div id="tlImportStep3" class="hidden">
         <h4 class="section-title" style="margin:0 0 8px">مطابقة أسماء المعلمين</h4>
-        <p class="section-desc">وُجدت <strong id="tlImportUniqueCount">0</strong> أسماء مختلفة في عمود المعلم. اختر لكل اسم المعلم المطابق في النظام، أو تجاهله إن لم يكن مطلوباً.</p>
+        <p class="section-desc" id="tlImportMatchIntro">وُجدت <strong id="tlImportUniqueCount">0</strong> أسماء مختلفة لم يتم ربطها تلقائياً. اختر لكل اسم المعلم المطابق في النظام، أو تجاهله إن لم يكن مطلوباً.</p>
         <div id="tlImportMatchGrid" style="max-height:320px;overflow-y:auto;margin-top:10px"></div>
+      </div>
+
+      <!-- الخطوة 3ب: مراجعة التعارضات قبل الاستبدال -->
+      <div id="tlImportStep3b" class="hidden">
+        <h4 class="section-title" style="margin:0 0 8px;color:var(--warn)">⚠ تنبيه: سيتم استبدال سجلات موجودة</h4>
+        <p class="section-desc">وُجد <strong id="tlImportConflictCount">0</strong> سجل حضور لديه بيانات مسجَّلة مسبقاً. راجع القائمة وأزل التحديد عن أي سجل تريد الإبقاء عليه كما هو دون استبدال.</p>
+        <div id="tlImportConflictGrid" style="max-height:320px;overflow-y:auto;margin-top:10px"></div>
       </div>
 
       <!-- الخطوة 4: نتيجة الاستيراد -->
@@ -2337,8 +2342,8 @@
     </div>
     <div class="modal-footer" id="tlImportFooter">
       <button class="btn-secondary" onclick="closeTeacherLogImportModal()">إلغاء</button>
-      <button class="btn-primary hidden" id="tlImportNextBtn" onclick="goToTeacherMatchStep()">التالي: مطابقة الأسماء</button>
-      <button class="btn-primary hidden" id="tlImportConfirmBtn" onclick="confirmTeacherLogImport()"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-left:4px;"><polyline points="20 6 9 17 4 12"/></svg> استيراد السجلات</button>
+      <button class="btn-primary hidden" id="tlImportNextBtn" onclick="_tlProceedFromMapping()">التالي</button>
+      <button class="btn-primary hidden" id="tlImportConfirmBtn" onclick="_tlReviewConflicts()"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-left:4px;"><polyline points="20 6 9 17 4 12"/></svg> استيراد السجلات</button>
     </div>
   </div>
 </div>
