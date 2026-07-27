@@ -51,6 +51,7 @@ const APP_DIR    = path.join(ROOT_DIR, 'app');   // للملفات الثابت�
 const DEFAULT_DB = {
   students: [], classes: [], teachers: [],
   teacherLog: [], attendance: [], leaves: [], holidays: [], quranProgress: [],
+  teacherLogImportBatches: [],
   calendarEvents: [],
   notices: [],
   waGroups:    [],
@@ -1726,7 +1727,7 @@ app.post('/api/teacher-log/import-preview', upload.single('file'), (req, res) =>
       headers: Object.keys(rows[0]),
       rows: rows.slice(0, 5000), // سقف عالٍ يكفي لأشهر من سجلات الحضور دون إبطاء المتصفح
       total: rows.length,
-      teachers: db.teachers.map(t => ({ id:t.id, name:t.name })),
+      teachers: db.teachers.map(t => ({ id:t.id, name:t.name, teacherId:t.teacherId||'' })),
     });
   } catch(e) {
     try { if (req.file && req.file.path) fs.unlinkSync(req.file.path); } catch(_){}
@@ -1734,12 +1735,40 @@ app.post('/api/teacher-log/import-preview', upload.single('file'), (req, res) =>
   }
 });
 
-// خطوة ٢: تأكيد الاستيراد — تستقبل صفوفاً مطابَقة بالفعل (teacherId محدد لكل صف من الواجهة)
+// خطوة ٢أ: فحص التعارضات — يعيد أي صف سيستبدل بيانات حضور/انصراف مسجّلة مسبقاً لنفس المعلم/التاريخ
+app.post('/api/teacher-log/import-check-conflicts', (req, res) => {
+  const { entries=[] } = req.body;
+  const db = readDB();
+  const conflicts = [];
+  entries.forEach((e, index) => {
+    const date = parseFlexibleDate(e.date);
+    if (!e.teacherId || !date) return;
+    const existing = db.teacherLog.find(l => l.teacherId===e.teacherId && l.date===date);
+    if (existing && (existing.checkIn || existing.checkOut)) {
+      const teacher = db.teachers.find(t => t.id === e.teacherId);
+      conflicts.push({
+        index,
+        teacherName: teacher ? teacher.name : '—',
+        date,
+        existingCheckIn:  existing.checkIn  || null,
+        existingCheckOut: existing.checkOut || null,
+        newCheckIn:  parseFlexibleTime(e.checkIn)  || existing.checkIn  || null,
+        newCheckOut: parseFlexibleTime(e.checkOut) || existing.checkOut || null,
+      });
+    }
+  });
+  res.json({ ok:true, conflicts });
+});
+
+// خطوة ٢ب: تأكيد الاستيراد — تستقبل صفوفاً مطابَقة بالفعل (teacherId محدد لكل صف من الواجهة)
+// كل استيراد يُسجَّل كـ"دفعة" (batch) بكل التغييرات التي أحدثها حتى يمكن التراجع عنه لاحقاً
 app.post('/api/teacher-log/import-confirm', (req, res) => {
   const { entries=[] } = req.body;
   const db = readDB();
+  if (!Array.isArray(db.teacherLogImportBatches)) db.teacherLogImportBatches = [];
   const validTeacherIds = new Set(db.teachers.map(t=>t.id));
   let added=0, updated=0, skipped=0;
+  const changes = [];
   for (const e of entries) {
     const teacherId = e.teacherId;
     const date     = parseFlexibleDate(e.date);
@@ -1748,16 +1777,60 @@ app.post('/api/teacher-log/import-confirm', (req, res) => {
     if (!teacherId || !validTeacherIds.has(teacherId) || !date || (!checkIn && !checkOut)) { skipped++; continue; }
     const existing = db.teacherLog.find(l => l.teacherId===teacherId && l.date===date);
     if (existing) {
+      changes.push({ action:'updated', teacherLogId: existing.id, before:{ checkIn: existing.checkIn||null, checkOut: existing.checkOut||null } });
       if (checkIn)  existing.checkIn  = checkIn;
       if (checkOut) existing.checkOut = checkOut;
       updated++;
     } else {
-      db.teacherLog.push({ id:newId(), teacherId, date, checkIn: checkIn||null, checkOut: checkOut||null });
+      const rec = { id:newId(), teacherId, date, checkIn: checkIn||null, checkOut: checkOut||null };
+      db.teacherLog.push(rec);
+      changes.push({ action:'created', teacherLogId: rec.id });
       added++;
     }
   }
+
+  let batchId = null;
+  if (changes.length) {
+    batchId = newId();
+    db.teacherLogImportBatches.push({ id: batchId, createdAt: new Date().toISOString(), date: nowDate(), addedCount: added, updatedCount: updated, changes });
+    // احتفظ بآخر 20 دفعة فقط لتجنّب تضخم الملف
+    if (db.teacherLogImportBatches.length > 20) db.teacherLogImportBatches = db.teacherLogImportBatches.slice(-20);
+  }
+
   writeDB(db);
-  res.json({ ok:true, added, updated, skipped });
+  res.json({ ok:true, added, updated, skipped, batchId });
+});
+
+// قائمة بآخر عمليات الاستيراد القابلة للتراجع (أحدثها أولاً)
+app.get('/api/teacher-log/import-batches', (req, res) => {
+  const db = readDB();
+  const batches = (db.teacherLogImportBatches||[])
+    .slice().reverse()
+    .map(b => ({ id:b.id, createdAt:b.createdAt, date:b.date, addedCount:b.addedCount, updatedCount:b.updatedCount }));
+  res.json({ ok:true, batches });
+});
+
+// التراجع عن عملية استيراد: يحذف السجلات التي أُنشئت ويعيد السجلات التي حُدِّثت لقيمتها السابقة
+app.post('/api/teacher-log/import-undo', (req, res) => {
+  const { batchId } = req.body;
+  const db = readDB();
+  const batches = db.teacherLogImportBatches || [];
+  const idx = batches.findIndex(b => b.id === batchId);
+  if (idx === -1) return res.json({ ok:false, error:'لم يتم العثور على عملية الاستيراد هذه — ربما تم التراجع عنها بالفعل' });
+  const batch = batches[idx];
+  let reverted = 0;
+  batch.changes.forEach(ch => {
+    if (ch.action === 'created') {
+      const i = db.teacherLog.findIndex(l => l.id === ch.teacherLogId);
+      if (i !== -1) { db.teacherLog.splice(i, 1); reverted++; }
+    } else if (ch.action === 'updated') {
+      const rec = db.teacherLog.find(l => l.id === ch.teacherLogId);
+      if (rec) { rec.checkIn = ch.before.checkIn; rec.checkOut = ch.before.checkOut; reverted++; }
+    }
+  });
+  batches.splice(idx, 1); // لا يمكن التراجع عن نفس الدفعة مرتين
+  writeDB(db);
+  res.json({ ok:true, reverted });
 });
 
 // ── تسجيل انصراف تلقائي — لكل معلم وقته الخاص (t.checkoutTime) وإلا الوقت العام من الإعدادات ──
