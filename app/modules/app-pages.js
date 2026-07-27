@@ -203,6 +203,10 @@ async function deleteTeacher(id) {
 //  حضور المعلمين (Check-In)
 // ══════════════════════════════════════════════════════════
 function renderCheckinList() {
+  if (document.getElementById('tlLastImportBanner') && !renderCheckinList._bannerChecked) {
+    renderCheckinList._bannerChecked = true;
+    _tlCheckLastImportBanner();
+  }
   const search   = document.getElementById('checkinSearch')?.value?.toLowerCase() || '';
   let teachers   = state.teachers;
   if (search) teachers = teachers.filter(t => (t.name||'').toLowerCase().includes(search));
@@ -321,12 +325,23 @@ async function saveAutoCheckoutSettings() {
 // ── استيراد سجلات حضور سابقة للمعلمين من Excel/CSV ──────
 const TL_FIELD_ALIASES = {
   teacherName: ['اسم المعلم','الاسم','اسم المعلم/المشرف','المعلم','name','teacher name','teacher_name'],
+  teacherIdCol:['رقم المعلم','معرف المعلم','معرّف المعلم','الرقم الوظيفي','teacher id','teacherid','employee id'],
   date:        ['التاريخ','تاريخ','date'],
   checkIn:     ['وقت الحضور','الحضور','دخول','check in','checkin','time in'],
   checkOut:    ['وقت الانصراف','الانصراف','خروج','check out','checkout','time out'],
 };
+const TL_ROLE_LABELS = {
+  '':            'تجاهل',
+  teacherName:   'اسم المعلم',
+  teacherIdCol:  'معرّف المعلم (رقم)',
+  date:          'التاريخ',
+  checkIn:       'وقت الحضور',
+  checkOut:      'وقت الانصراف',
+};
 
-let _tlImport = { headers:[], rows:[], teachers:[], mapping:{}, nameMatch:{} };
+let _tlImport = { headers:[], rows:[], teachers:[], columnRoles:{}, mapping:{}, nameMatch:{}, rowTeacherId:[] };
+const TL_IMPORT_CONFIRM_BTN_HTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-left:4px;"><polyline points="20 6 9 17 4 12"/></svg> استيراد السجلات';
+const _tlEsc = s => String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 
 function _tlNormName(s) {
   return String(s||'')
@@ -355,13 +370,18 @@ function closeTeacherLogImportModal() {
 }
 
 function resetTeacherLogImport() {
-  _tlImport = { headers:[], rows:[], teachers:[], mapping:{}, nameMatch:{} };
+  _tlImport = { headers:[], rows:[], teachers:[], columnRoles:{}, mapping:{}, nameMatch:{}, rowTeacherId:[] };
   document.getElementById('tlImportStep1').classList.remove('hidden');
   document.getElementById('tlImportStep2').classList.add('hidden');
   document.getElementById('tlImportStep3').classList.add('hidden');
+  document.getElementById('tlImportStep3b').classList.add('hidden');
   document.getElementById('tlImportStep4').classList.add('hidden');
   document.getElementById('tlImportNextBtn').classList.add('hidden');
   document.getElementById('tlImportConfirmBtn').classList.add('hidden');
+  document.getElementById('tlImportConfirmBtn').disabled = false;
+  document.getElementById('tlImportConfirmBtn').innerHTML = TL_IMPORT_CONFIRM_BTN_HTML;
+  document.getElementById('tlImportConfirmBtn').onclick = _tlReviewConflicts;
+  document.getElementById('tlImportFooter').querySelector('.btn-secondary').textContent = 'إلغاء';
   const inp = document.getElementById('tlImportFile');
   if (inp) {
     const fresh = inp.cloneNode(true);
@@ -411,70 +431,124 @@ async function _processTeacherLogImportFile(file) {
   _tlImport.headers  = data.headers;
   _tlImport.rows     = data.rows;
   _tlImport.teachers = data.teachers || [];
-  _tlImport.mapping  = _tlAutoDetectMapping(data.headers);
+
+  // ابدأ بأدوار مقترحة تلقائياً بناءً على أسماء الأعمدة الشائعة
+  const auto = _tlAutoDetectMapping(data.headers);
+  _tlImport.columnRoles = {};
+  data.headers.forEach(h => { _tlImport.columnRoles[h] = ''; });
+  Object.entries(auto).forEach(([field, header]) => { _tlImport.columnRoles[header] = field; });
+  _tlImport.mapping = _tlGetMapping();
 
   if (info) info.textContent = `📄 ${file.name} — ${data.total} صف تم قراءتها${data.total > data.rows.length ? ` (سيتم استيراد أول ${data.rows.length})` : ''}`;
-  _renderTlMappingGrid();
-  _renderTlImportPreview();
+  _renderTlColumnMapper();
   document.getElementById('tlImportNextBtn').classList.remove('hidden');
 }
 
-function _renderTlMappingGrid() {
-  const grid = document.getElementById('tlImportMappingGrid');
-  if (!grid) return;
-  const fieldLabels = { teacherName:'اسم المعلم *', date:'التاريخ *', checkIn:'وقت الحضور *', checkOut:'وقت الانصراف' };
-  grid.innerHTML = Object.entries(fieldLabels).map(([field, label]) => `
-    <div class="import-map-row">
-      <div class="import-map-field">${label}</div>
-      <div class="import-map-arrow">←</div>
-      <select class="import-map-select" data-field="${field}" onchange="_updateTlMapping(this)">
-        <option value="">— غير محدد —</option>
-        ${_tlImport.headers.map(h =>
-          `<option value="${h}" ${_tlImport.mapping[field]===h?'selected':''}>${h}</option>`
-        ).join('')}
-      </select>
-    </div>
-  `).join('');
+function _tlGetMapping() {
+  const m = {};
+  Object.entries(_tlImport.columnRoles).forEach(([header, role]) => { if (role) m[role] = header; });
+  return m;
 }
 
-function _updateTlMapping(sel) {
-  _tlImport.mapping[sel.dataset.field] = sel.value || undefined;
-  _renderTlImportPreview();
-}
-
-function _renderTlImportPreview() {
+// جدول عملي: القائمة المنسدلة فوق كل عمود حقيقي، مع عرض بيانات فعلية أسفلها للتأكد بصرياً
+function _renderTlColumnMapper() {
   const tbl = document.getElementById('tlImportPreviewTable');
-  if (!tbl || _tlImport.rows.length === 0) return;
-  const m = _tlImport.mapping;
-  const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-  const preview = _tlImport.rows.slice(0, 5);
+  if (!tbl) return;
+  const headers = _tlImport.headers;
+  const sample  = _tlImport.rows.slice(0, 5);
+
+  const selectHtml = (header) => `
+    <select class="import-map-select" data-header="${_tlEsc(header)}" onchange="_updateTlColumnRole(this)">
+      ${Object.entries(TL_ROLE_LABELS).map(([role,label]) =>
+        `<option value="${role}" ${_tlImport.columnRoles[header]===role?'selected':''}>${label}</option>`
+      ).join('')}
+    </select>`;
+
   tbl.innerHTML = `
-    <thead><tr><th>اسم المعلم</th><th>التاريخ</th><th>وقت الحضور</th><th>وقت الانصراف</th></tr></thead>
-    <tbody>${preview.map(row => `<tr>
-      <td>${m.teacherName ? esc(row[m.teacherName]||'—') : '<span style="color:var(--error)">غير محدد</span>'}</td>
-      <td>${m.date        ? esc(row[m.date]||'—')        : '<span style="color:var(--error)">غير محدد</span>'}</td>
-      <td>${m.checkIn     ? esc(row[m.checkIn]||'—')     : '<span style="color:var(--error)">غير محدد</span>'}</td>
-      <td>${m.checkOut    ? esc(row[m.checkOut]||'—')    : '—'}</td>
-    </tr>`).join('')}</tbody>
+    <thead>
+      <tr>${headers.map(h => `<th style="min-width:150px">${_tlEsc(h)}</th>`).join('')}</tr>
+      <tr>${headers.map(h => `<th>${selectHtml(h)}</th>`).join('')}</tr>
+    </thead>
+    <tbody>
+      ${sample.map(row => `<tr>${headers.map(h => `<td>${_tlEsc(row[h] ?? '—')}</td>`).join('')}</tr>`).join('')}
+    </tbody>
   `;
-  const note = document.getElementById('tlImportMappingNote');
-  const missing = ['teacherName','date','checkIn'].filter(f => !m[f]);
-  if (note) note.textContent = missing.length ? 'يرجى تحديد أعمدة اسم المعلم والتاريخ ووقت الحضور قبل المتابعة.' : '';
+  _tlValidateMapping();
 }
 
-function goToTeacherMatchStep() {
-  const m = _tlImport.mapping;
-  if (!m.teacherName || !m.date || !m.checkIn) return toast('يرجى تحديد أعمدة اسم المعلم والتاريخ ووقت الحضور');
+function _updateTlColumnRole(sel) {
+  const header = sel.dataset.header;
+  const role = sel.value;
+  if (role) {
+    // دور واحد فقط لكل حقل — ألغِ هذا الدور من أي عمود آخر كان يحمله
+    Object.keys(_tlImport.columnRoles).forEach(h => {
+      if (h !== header && _tlImport.columnRoles[h] === role) _tlImport.columnRoles[h] = '';
+    });
+  }
+  _tlImport.columnRoles[header] = role;
+  _tlImport.mapping = _tlGetMapping();
+  _renderTlColumnMapper();
+}
 
-  // اجمع كل الأسماء الفريدة في عمود المعلم عبر كل الصفوف
-  const namesSet = new Set();
-  _tlImport.rows.forEach(row => {
-    const raw = String(row[m.teacherName]||'').trim();
-    if (raw) namesSet.add(raw);
+function _tlValidateMapping() {
+  const m = _tlImport.mapping;
+  const note = document.getElementById('tlImportMappingNote');
+  if (!note) return;
+  const missing = [];
+  if (!m.date) missing.push('التاريخ');
+  if (!m.checkIn) missing.push('وقت الحضور');
+  if (!m.teacherName && !m.teacherIdCol) missing.push('اسم المعلم أو معرّفه');
+  note.textContent = missing.length ? `يرجى تحديد: ${missing.join('، ')}` : '';
+}
+
+// بعد المطابقة: اربط كل صف بمعلمه — أولاً عبر المعرّف (دقيق ومباشر) ثم بالاسم لما تبقّى فقط
+function _tlProceedFromMapping() {
+  const m = _tlImport.mapping;
+  if (!m.date || !m.checkIn || (!m.teacherName && !m.teacherIdCol)) {
+    return toast('يرجى تحديد عمود التاريخ ووقت الحضور، وعمود واحد على الأقل لتحديد المعلم (الاسم أو المعرّف)');
+  }
+
+  _tlImport.rowTeacherId = new Array(_tlImport.rows.length).fill(null);
+  const unmatchedNames = new Set();
+  let idAttempted = 0, idMatched = 0;
+
+  _tlImport.rows.forEach((row, i) => {
+    let teacherId = null;
+    if (m.teacherIdCol) {
+      const rawId = String(row[m.teacherIdCol]||'').trim();
+      if (rawId) {
+        idAttempted++;
+        const t = _tlImport.teachers.find(t => String(t.teacherId||'').trim() === rawId);
+        if (t) { teacherId = t.id; idMatched++; }
+      }
+    }
+    if (!teacherId && m.teacherName) {
+      const rawName = String(row[m.teacherName]||'').trim();
+      if (rawName) unmatchedNames.add(rawName);
+    }
+    _tlImport.rowTeacherId[i] = teacherId;
   });
-  const uniqueNames = [...namesSet];
+
+  _tlImport.idStats = { attempted: idAttempted, matched: idMatched };
+
+  if (unmatchedNames.size === 0) {
+    if (idAttempted && idMatched < idAttempted) {
+      toast(`تنبيه: لم يتم العثور على معلم لـ ${idAttempted - idMatched} من المعرّفات — سيتم تخطي تلك الصفوف`);
+    }
+    _tlReviewConflicts();
+  } else {
+    _tlRenderNameMatchStep([...unmatchedNames], idMatched);
+  }
+}
+
+function _tlRenderNameMatchStep(uniqueNames, idMatchedCount) {
   _tlImport.uniqueNames = uniqueNames;
   document.getElementById('tlImportUniqueCount').textContent = uniqueNames.length;
+  const intro = document.getElementById('tlImportMatchIntro');
+  if (intro) {
+    intro.innerHTML = (idMatchedCount > 0 ? `تم ربط ${idMatchedCount} صف تلقائياً عبر المعرّف. ` : '') +
+      `وُجدت <strong>${uniqueNames.length}</strong> أسماء لم تُربط تلقائياً — اختر لكل اسم المعلم المطابق، أو تجاهله.`;
+  }
 
   // حاول مطابقة كل اسم تلقائياً مع معلم موجود بالاسم (بعد تطبيع النص)
   uniqueNames.forEach(raw => {
@@ -483,17 +557,16 @@ function goToTeacherMatchStep() {
     _tlImport.nameMatch[raw] = found ? found.id : '';
   });
 
-  const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   const grid = document.getElementById('tlImportMatchGrid');
   grid.innerHTML = uniqueNames.map((raw, idx) => {
     const matched = _tlImport.nameMatch[raw];
     return `
     <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">
-      <div style="flex:1;font-size:13px;font-weight:600">${esc(raw)}</div>
+      <div style="flex:1;font-size:13px;font-weight:600">${_tlEsc(raw)}</div>
       <div style="color:var(--text2)">←</div>
       <select style="flex:1;font-size:13px" data-idx="${idx}" onchange="_tlUpdateNameMatch(this)">
         <option value="" ${!matched?'selected':''}>— تجاهل هذا الاسم —</option>
-        ${_tlImport.teachers.map(t => `<option value="${t.id}" ${matched===t.id?'selected':''}>${esc(t.name)}</option>`).join('')}
+        ${_tlImport.teachers.map(t => `<option value="${t.id}" ${matched===t.id?'selected':''}>${_tlEsc(t.name)}</option>`).join('')}
       </select>
     </div>`;
   }).join('');
@@ -509,23 +582,79 @@ function _tlUpdateNameMatch(sel) {
   _tlImport.nameMatch[raw] = sel.value;
 }
 
-async function confirmTeacherLogImport() {
+function _tlBuildEntries() {
   const m = _tlImport.mapping;
   const entries = [];
-  _tlImport.rows.forEach(row => {
-    const rawName = String(row[m.teacherName]||'').trim();
-    if (!rawName) return;
-    const teacherId = _tlImport.nameMatch[rawName];
-    if (!teacherId) return; // تم تجاهل هذا الاسم
+  _tlImport.rows.forEach((row, i) => {
+    let teacherId = _tlImport.rowTeacherId[i];
+    if (!teacherId && m.teacherName) {
+      const rawName = String(row[m.teacherName]||'').trim();
+      if (rawName) teacherId = _tlImport.nameMatch[rawName] || null;
+    }
+    if (!teacherId) return;
     const date     = row[m.date];
     const checkIn  = row[m.checkIn];
     const checkOut = m.checkOut ? row[m.checkOut] : '';
     if (!date || !checkIn) return;
     entries.push({ teacherId, date, checkIn, checkOut });
   });
+  return entries;
+}
 
-  if (!entries.length) return toast('لا توجد صفوف صالحة للاستيراد — تأكد من مطابقة الأسماء');
+async function _tlReviewConflicts() {
+  const entries = _tlBuildEntries();
+  if (!entries.length) return toast('لا توجد صفوف صالحة للاستيراد — تأكد من مطابقة المعلمين');
+  _tlImport.entries = entries;
 
+  const btn = document.getElementById('tlImportConfirmBtn');
+  if (btn) { btn.classList.remove('hidden'); btn.disabled = true; btn.textContent = 'جارٍ التحقق من التعارضات…'; }
+
+  let res;
+  try {
+    res = await apiFetch('/teacher-log/import-check-conflicts', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ entries }),
+    });
+  } catch(e) { res = null; }
+
+  if (btn) { btn.disabled = false; btn.innerHTML = TL_IMPORT_CONFIRM_BTN_HTML; }
+
+  const conflicts = res?.ok ? (res.conflicts||[]) : [];
+  if (!conflicts.length) { await _tlDoImport(entries); return; }
+
+  _tlImport.conflicts = conflicts;
+  document.getElementById('tlImportConflictCount').textContent = conflicts.length;
+  document.getElementById('tlImportConflictGrid').innerHTML = conflicts.map((c, i) => `
+    <label style="display:flex;align-items:flex-start;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px;cursor:pointer">
+      <input type="checkbox" checked data-cidx="${i}" style="margin-top:3px" />
+      <span>
+        <strong>${_tlEsc(c.teacherName)}</strong> — ${_tlEsc(c.date)}<br/>
+        <span style="color:var(--text2)">الحالي: ${c.existingCheckIn||'—'} / ${c.existingCheckOut||'—'} &nbsp;←&nbsp; الجديد: ${c.newCheckIn||'—'} / ${c.newCheckOut||'—'}</span>
+      </span>
+    </label>
+  `).join('');
+
+  document.getElementById('tlImportStep2').classList.add('hidden');
+  document.getElementById('tlImportStep3').classList.add('hidden');
+  document.getElementById('tlImportStep3b').classList.remove('hidden');
+  const confirmBtn = document.getElementById('tlImportConfirmBtn');
+  confirmBtn.classList.remove('hidden');
+  confirmBtn.textContent = 'تأكيد الاستيراد';
+  confirmBtn.onclick = _tlFinalizeImport;
+}
+
+async function _tlFinalizeImport() {
+  const conflicts = _tlImport.conflicts || [];
+  const excludeIndices = new Set();
+  document.querySelectorAll('#tlImportConflictGrid input[type=checkbox]').forEach(cb => {
+    if (!cb.checked) excludeIndices.add(conflicts[+cb.dataset.cidx].index);
+  });
+  const finalEntries = _tlImport.entries.filter((e, idx) => !excludeIndices.has(idx));
+  if (!finalEntries.length) return toast('لم يتبقَّ أي سجل للاستيراد بعد استبعاد التعارضات');
+  await _tlDoImport(finalEntries);
+}
+
+async function _tlDoImport(entries) {
   const btn = document.getElementById('tlImportConfirmBtn');
   if (btn) { btn.disabled = true; btn.textContent = 'جارٍ الاستيراد…'; }
 
@@ -534,7 +663,9 @@ async function confirmTeacherLogImport() {
     body: JSON.stringify({ entries }),
   });
 
+  document.getElementById('tlImportStep2').classList.add('hidden');
   document.getElementById('tlImportStep3').classList.add('hidden');
+  document.getElementById('tlImportStep3b').classList.add('hidden');
   document.getElementById('tlImportStep4').classList.remove('hidden');
   document.getElementById('tlImportConfirmBtn').classList.add('hidden');
   document.getElementById('tlImportFooter').querySelector('.btn-secondary').textContent = 'إغلاق';
@@ -550,12 +681,45 @@ async function confirmTeacherLogImport() {
           ${res.updated > 0 ? `<span class="import-stat green">سجلات محدَّثة: <strong>${res.updated}</strong></span>` : ''}
           ${res.skipped > 0 ? `<span class="import-stat gray">تم تخطّيها: <strong>${res.skipped}</strong></span>` : ''}
         </div>
+        ${res.batchId ? `<button class="btn-secondary" style="margin-top:14px;font-size:13px" onclick="_tlUndoImport('${res.batchId}', this)">↩ تراجع عن هذا الاستيراد</button>` : ''}
       </div>`;
-    await loadAll(); renderCheckinList(); loadTeacherSummary();
+    await loadAll(); renderCheckinList(); loadTeacherSummary(); _tlCheckLastImportBanner();
     toast(`تم استيراد سجلات الحضور (${res.added} جديد، ${res.updated} محدَّث)`);
   } else {
     result.innerHTML = `<div style="color:var(--error)">تعذر إتمام الاستيراد${res?.error?': '+res.error:''}</div>`;
   }
+}
+
+async function _tlUndoImport(batchId, btnEl) {
+  if (btnEl) { btnEl.disabled = true; btnEl.textContent = 'جارٍ التراجع…'; }
+  const res = await apiFetch('/teacher-log/import-undo', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ batchId }),
+  });
+  if (res?.ok) {
+    toast(`تم التراجع عن الاستيراد (${res.reverted} سجل)`);
+    if (btnEl) { btnEl.outerHTML = '<div style="color:var(--text2);font-size:13px;margin-top:14px">↩ تم التراجع عن هذا الاستيراد</div>'; }
+    await loadAll(); renderCheckinList(); loadTeacherSummary();
+    document.getElementById('tlLastImportBanner')?.classList.add('hidden');
+  } else {
+    toast(res?.error || 'تعذر التراجع عن الاستيراد');
+    if (btnEl) { btnEl.disabled = false; btnEl.textContent = '↩ تراجع عن هذا الاستيراد'; }
+  }
+}
+
+// شريط تنبيه دائم يظهر أحدث عملية استيراد قابلة للتراجع (حتى بعد إغلاق النافذة أو تحديث الصفحة)
+async function _tlCheckLastImportBanner() {
+  const banner = document.getElementById('tlLastImportBanner');
+  if (!banner) return;
+  const res = await apiFetch('/teacher-log/import-batches');
+  const last = res?.ok && res.batches && res.batches[0];
+  if (!last) { banner.classList.add('hidden'); return; }
+  banner.classList.remove('hidden');
+  banner.innerHTML = `
+    <div class="card form-card" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px;background:var(--warn-bg,#fff7ed)">
+      <div style="font-size:13px">آخر استيراد: <strong>${last.addedCount}</strong> جديد، <strong>${last.updatedCount}</strong> محدَّث — ${_tlEsc(last.date)}</div>
+      <button class="btn-secondary" style="font-size:12px" onclick="_tlUndoImport('${last.id}', this)">↩ تراجع عن آخر استيراد</button>
+    </div>`;
 }
 
 // ── رمز QR لتسجيل الحضور الذاتي ─────────────────────────
