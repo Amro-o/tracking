@@ -231,15 +231,15 @@ function renderCheckinList() {
         <div style="font-size:12px;color:var(--text2)">${t.subject||t.teacherId||'—'}</div>
         ${log ? `
           <div class="checkin-times">
-            حضور: ${log.checkIn}
+            حضور: ${log.checkIn || '—'}
             ${log.checkOut ? ' | انصراف: '+log.checkOut : ''}
             ${duration ? ' | <strong>'+duration+'</strong>' : ''}
           </div>` : ''}
       </div>
       <span class="checkin-status ${statusClass}">${statusLabel}</span>
       <div style="display:flex;flex-direction:column;gap:6px;margin-right:8px">
-        ${!log ? `<button class="btn-primary" style="font-size:12px;padding:8px 12px" onclick="checkIn('${t.id}')">تسجيل حضور</button>` : ''}
-        ${log && !log.checkOut ? `<button class="btn-secondary" style="font-size:12px;padding:8px 12px" onclick="checkOut('${t.id}')">تسجيل انصراف</button>` : ''}
+        ${!log || !log.checkIn ? `<button class="btn-primary" style="font-size:12px;padding:8px 12px" onclick="checkIn('${t.id}')">تسجيل حضور</button>` : ''}
+        ${log && log.checkIn && !log.checkOut ? `<button class="btn-secondary" style="font-size:12px;padding:8px 12px" onclick="checkOut('${t.id}')">تسجيل انصراف</button>` : ''}
         <button class="btn-secondary" style="font-size:12px;padding:8px 12px" onclick="openTeacherLogEditModal('${t.id}')" title="تصحيح الوقت يدوياً">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-left:3px"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg> تصحيح الوقت
         </button>
@@ -297,10 +297,13 @@ async function saveTeacherLogEdit() {
   const checkOut  = document.getElementById('tleCheckOut').value;
   if (!date) return toast('الرجاء اختيار التاريخ');
   if (!checkIn && !checkOut) return toast('الرجاء إدخال وقت الحضور أو الانصراف');
+  // قيم HH:MM بصيغة ثابتة، فالمقارنة النصية كافية — الانصراف قبل الحضور يُنتج مدة ~٢٣ ساعة
+  if (checkIn && checkOut && checkOut <= checkIn) return toast('وقت الانصراف يجب أن يكون بعد وقت الحضور');
   const res = await apiFetch('/teacher-log/manual', {
     method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({ teacherId, date, checkIn: checkIn || null, checkOut: checkOut || null }),
   });
+  if (!res) return toast('تعذّر الاتصال بالخادم — لم يُحفظ التعديل');
   if (res?.error) return toast('<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-left:3px;flex-shrink:0"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> '+res.error);
   closeModal('teacherLogEditModal');
   await loadAll(); renderCheckinList(); loadTeacherSummary();
@@ -1095,6 +1098,31 @@ function initReports() {
   const mc = document.getElementById('rptMonthlyClass');
   if (dc) dc.innerHTML = classOpts;
   if (mc) mc.innerHTML = classOpts;
+
+  // ── تقرير معلم لفترة محددة ──
+  const rt = document.getElementById('rptRangeTeacher');
+  if (rt) {
+    const prev = rt.value;
+    rt.innerHTML = '';
+    const ph = document.createElement('option');
+    ph.value = ''; ph.textContent = '— اختر المعلم —';
+    rt.appendChild(ph);
+    [...state.teachers]
+      .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ar'))
+      .forEach(t => {
+        const o = document.createElement('option');
+        o.value = t.id;
+        o.textContent = (t.name && String(t.name).trim()) ? t.name : 'بدون اسم';
+        rt.appendChild(o);
+      });
+    if (prev && state.teachers.some(t => t.id === prev)) rt.value = prev;
+  }
+  // الفترة الافتراضية: من أول الشهر الميلادي الحالي إلى اليوم (تبقى اختيارات المستخدم إن وُجدت)
+  const _rf = document.getElementById('rptRangeFrom');
+  const _rto = document.getElementById('rptRangeTo');
+  const _today = todayISO();
+  if (_rf && !_rf.value)   { _rf.value  = _today.slice(0, 8) + '01'; updateHijriLabel(_rf,  'rptRangeFromHijri'); }
+  if (_rto && !_rto.value) { _rto.value = _today;                    updateHijriLabel(_rto, 'rptRangeToHijri'); }
 }
 
 // Helper: update report month/year labels and dropdown options based on calendar type
@@ -1186,6 +1214,16 @@ function downloadReport(type) {
     url = isGreg
       ? `${API}/print/teacher-monthly/gregorian/${hYear}/${hMonth}`
       : `${API}/print/teacher-monthly/${hYear}/${hMonth}`;
+  } else if (type==='teacher-range-excel' || type==='print-teacher-range') {
+    const tid  = document.getElementById('rptRangeTeacher')?.value;
+    const from = document.getElementById('rptRangeFrom')?.value;
+    const to   = document.getElementById('rptRangeTo')?.value;
+    if (!tid)  return toast('اختر المعلم');
+    if (!from || !to) return toast('اختر تاريخ البداية وتاريخ النهاية');
+    if (from > to) return toast('تاريخ البداية يجب أن يكون قبل تاريخ النهاية');
+    if ((Date.parse(to) - Date.parse(from)) / 86400000 > 731) return toast('الفترة طويلة جداً — الحد الأقصى سنتان');
+    const base = type === 'print-teacher-range' ? 'print' : 'reports';
+    url = `${API}/${base}/teacher-range/${encodeURIComponent(tid)}?from=${from}&to=${to}`;
   } else if (type==='print-students-list') {
     const listClass = document.getElementById('rptDailyClass')?.value;
     url = `${API}/print/students-list` + (listClass ? `?classId=${listClass}` : '');
