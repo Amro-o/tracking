@@ -1485,9 +1485,15 @@ app.post('/api/teacher-log/checkin', (req, res) => {
       l.checkOut=String(Math.floor(tot/60)).padStart(2,'0')+':'+String(tot%60).padStart(2,'0');
     }
   });
-  if (db.teacherLog.find(l=>l.teacherId===teacherId && l.date===today))
+  const existing = db.teacherLog.find(l=>l.teacherId===teacherId && l.date===today);
+  if (existing && existing.checkIn)
     return res.json({error:'تم تسجيل الحضور مسبقاً لهذا اليوم'});
-  db.teacherLog.push({id:newId(), teacherId, date:today, checkIn:time, checkOut:null});
+  if (existing) {
+    // سجل اليوم موجود بدون وقت حضور (مثلاً أُدخل الانصراف فقط يدوياً) — نكمله بدل رفض التسجيل
+    existing.checkIn = time;
+  } else {
+    db.teacherLog.push({id:newId(), teacherId, date:today, checkIn:time, checkOut:null});
+  }
   writeDB(db);
   res.json({ok:true, time});
 });
@@ -1498,7 +1504,7 @@ app.post('/api/teacher-log/checkout', (req, res) => {
   const time  = nowTime();
   const db    = readDB();
   const entry = db.teacherLog.find(l=>l.teacherId===teacherId && l.date===today);
-  if (!entry)          return res.json({error:'لم يتم تسجيل الحضور بعد'});
+  if (!entry || !entry.checkIn) return res.json({error:'لم يتم تسجيل الحضور بعد'});
   if (entry.checkOut)  return res.json({error:'تم تسجيل الانصراف مسبقاً'});
   entry.checkOut = time;
   const mins = calcSessionMins(entry.checkIn, time);
@@ -1512,8 +1518,17 @@ app.post('/api/teacher-log/manual', (req, res) => {
   const {teacherId, date, checkIn, checkOut} = req.body;
   if (!teacherId || !date) return res.json({error:'بيانات ناقصة'});
   if (!checkIn && !checkOut) return res.json({error:'الرجاء إدخال وقت الحضور أو الانصراف'});
+  const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+  if ((checkIn && !TIME_RE.test(checkIn)) || (checkOut && !TIME_RE.test(checkOut)))
+    return res.json({error:'صيغة الوقت غير صحيحة'});
   const db = readDB();
   let entry = db.teacherLog.find(l => l.teacherId === teacherId && l.date === date);
+  // الوقتان بعد التعديل (الجديد إن وُجد وإلا المحفوظ) — الانصراف يجب أن يكون بعد الحضور،
+  // وإلا يُحسب الفرق ~٢٣ ساعة بسبب افتراض عبور منتصف الليل
+  const finalIn  = checkIn  || entry?.checkIn;
+  const finalOut = checkOut || entry?.checkOut;
+  if (finalIn && finalOut && finalOut <= finalIn)
+    return res.json({error:`وقت الانصراف (${finalOut}) يجب أن يكون بعد وقت الحضور (${finalIn})`});
   if (!entry) {
     entry = {id:newId(), teacherId, date, checkIn:null, checkOut:null};
     db.teacherLog.push(entry);
@@ -1848,6 +1863,10 @@ function startAutoCheckoutScheduler() {
         if (l.date !== today || !l.checkIn || l.checkOut) return;
         const teacher    = db.teachers.find(t => t.id === l.teacherId);
         const targetTime = (teacher && teacher.checkoutTime) || defaultTime;
+        // إن سجّل المعلم حضوره بعد وقت الانصراف التلقائي (أو في نفس الدقيقة) فلا نُغلق جلسته الآن:
+        // وإلا يصبح الانصراف قبل الحضور ويُحسب الفرق ~٢٣ ساعة. تُغلق جلسته عند أول
+        // تسجيل حضور لاحق (تقدير ٤ ساعات) أو بتسجيل انصراف يدوي/تصحيح.
+        if (l.checkIn >= targetTime) return;
         // مقارنة نصية كافية لأن الصيغة HH:MM بترميز ثابت الطول — تكافئ المقارنة الزمنية
         if (time >= targetTime) {
           l.checkOut = targetTime;
@@ -3530,6 +3549,197 @@ async function buildClassQuranSheet(db, classId) {
 function arabicFilename(base) {
   return `attachment; filename="${encodeURIComponent(base)}.xlsx"; filename*=UTF-8''${encodeURIComponent(base)}.xlsx`;
 }
+
+// ══════════════════════════════════════════════════════════
+//  تقرير معلم واحد لفترة زمنية محددة (من تاريخ إلى تاريخ)
+//  — يعرض كل يوم في الفترة: حضور / غياب / جمعة / إجازة، مع الأوقات والمدة والإجماليات
+// ══════════════════════════════════════════════════════════
+const _RANGE_MAX_DAYS = 732; // سنتان كحد أقصى لمنع طلبات ضخمة
+
+// كل حسابات التواريخ هنا بـ UTC صرف على نصوص YYYY-MM-DD — لا تتأثر بمنطقة الخادم الزمنية
+function _isoOk(s) {
+  if (typeof s !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const [y, m, d] = s.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
+}
+function _isoAddDays(iso, n) {
+  const [y, m, d] = iso.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + n));
+  return dt.getUTCFullYear() + '-' + String(dt.getUTCMonth() + 1).padStart(2, '0') + '-' + String(dt.getUTCDate()).padStart(2, '0');
+}
+function _isoDow(iso) {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+}
+function _isoDiffDays(a, b) {
+  const pa = a.split('-').map(Number), pb = b.split('-').map(Number);
+  return Math.round((Date.UTC(pb[0], pb[1] - 1, pb[2]) - Date.UTC(pa[0], pa[1] - 1, pa[2])) / 86400000);
+}
+function fmtGregorian(iso) {
+  const [y, m, d] = iso.split('-').map(Number);
+  return `${d} ${GM[m]} ${y}`;
+}
+function _rptEsc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// يبني بيانات التقرير. يعيد {error,status} عند خطأ في المدخلات.
+function buildTeacherRangeData(db, teacherId, from, to) {
+  const teacher = db.teachers.find(t => t.id === teacherId);
+  if (!teacher) return { error: 'المعلم غير موجود', status: 404 };
+  if (!_isoOk(from) || !_isoOk(to)) return { error: 'صيغة التاريخ غير صحيحة', status: 400 };
+  if (from > to) { const tmp = from; from = to; to = tmp; }
+  const span = _isoDiffDays(from, to) + 1;
+  if (span > _RANGE_MAX_DAYS) return { error: 'الفترة المطلوبة أطول من المسموح (سنتان كحد أقصى)', status: 400 };
+
+  const today  = nowDate();
+  const nowStr = nowTime();
+  const holidays = new Map((db.holidays || []).map(h => [h.date, h.reason || h.type || 'إجازة']));
+  const logByDate = {};
+  db.teacherLog.forEach(l => {
+    if (l.teacherId !== teacherId || !l.date || l.date < from || l.date > to) return;
+    // عند تكرار سجلين لنفس اليوم نفضّل الذي فيه وقت حضور
+    if (!logByDate[l.date] || (!logByDate[l.date].checkIn && l.checkIn)) logByDate[l.date] = l;
+  });
+
+  const days = [];
+  const totals = { presentDays: 0, absentDays: 0, offDays: 0, totalMins: 0, estimatedDays: 0 };
+  for (let i = 0; i < span; i++) {
+    const date = _isoAddDays(from, i);
+    const dow  = _isoDow(date);
+    const log  = logByDate[date];
+    const offReason = dow === 5 ? 'الجمعة' : (holidays.has(date) ? holidays.get(date) : null);
+    const day = {
+      date, dayName: HD[dow], greg: fmtGregorian(date), hijri: formatHijri(date),
+      checkIn: log?.checkIn || null, checkOut: log?.checkOut || null,
+      mins: 0, estimated: false, offDay: offReason, status: '',
+    };
+
+    if (log && log.checkIn) {
+      day.status = 'present';
+      if (log.checkOut) {
+        day.mins = calcSessionMins(log.checkIn, log.checkOut);
+      } else if (date === today) {
+        const [h1, m1] = log.checkIn.split(':').map(Number);
+        const [h2, m2] = nowStr.split(':').map(Number);
+        day.mins = Math.max(0, (h2 * 60 + m2) - (h1 * 60 + m1)); // لا يزال حاضراً — حتى الآن
+        day.live = true;
+      } else {
+        day.mins = calcSessionMins(log.checkIn, null); // لم يُسجَّل انصراف — تقدير ٤ ساعات (نفس بقية التقارير)
+        day.estimated = true;
+        totals.estimatedDays++;
+      }
+      totals.presentDays++;
+      totals.totalMins += day.mins;
+    } else if (log && log.checkOut) {
+      day.status = 'incomplete'; // انصراف بلا حضور (إدخال يدوي ناقص)
+    } else if (date > today) {
+      day.status = 'upcoming';
+    } else if (offReason) {
+      day.status = 'off';
+      totals.offDays++;
+    } else if (date === today) {
+      day.status = 'pending'; // اليوم ولم يسجل بعد — لا يُحسب غياباً قبل انتهاء اليوم
+    } else {
+      day.status = 'absent';
+      totals.absentDays++;
+    }
+    days.push(day);
+  }
+  totals.avgMins = totals.presentDays ? Math.round(totals.totalMins / totals.presentDays) : 0;
+  return { teacher, from, to, days, totals, daysCount: span };
+}
+
+const _RANGE_LABEL = { present:'حاضر', absent:'غائب', off:'عطلة', upcoming:'—', pending:'لم يسجّل بعد', incomplete:'سجل ناقص' };
+function _rangeStatusLabel(d) {
+  if (d.status === 'present') return d.offDay ? `حاضر (${d.offDay === 'الجمعة' ? 'يوم الجمعة' : 'يوم إجازة'})` : (d.live ? 'حاضر (لا يزال)' : 'حاضر');
+  if (d.status === 'off') return d.offDay;
+  return _RANGE_LABEL[d.status] || '';
+}
+function _rangeDurStr(d) {
+  if (d.status !== 'present' || !d.mins) return '—';
+  return minsToStr(d.mins) + (d.estimated ? ' *' : '');
+}
+
+async function buildTeacherRangeSheet(db, data) {
+  const wb  = new ExcelJS.Workbook();
+  const ws  = wb.addWorksheet('تقرير المعلم', {views:[{rightToLeft:true}]});
+  const school = db.settings.schoolName || 'حضور الحلقات';
+  const cols = 8;
+  ws.columns = [{width:6},{width:17},{width:21},{width:12},{width:11},{width:11},{width:13},{width:20}];
+
+  const logoEnd = await addLogoImage(wb, ws, cols, db);
+  const r1 = logoEnd + 1; titleRow(ws, r1, school, C.navy, {sz:14,bold:true,color:C.white}, cols, 36);
+  const r2 = r1 + 1;      titleRow(ws, r2, `تقرير حضور المعلم: ${data.teacher.name || '—'}`, C.slate, {sz:12,bold:true,color:C.white}, cols, 28);
+  const r3 = r2 + 1;      titleRow(ws, r3, `الفترة: من ${fmtGregorian(data.from)} إلى ${fmtGregorian(data.to)}  (${formatHijri(data.from)} — ${formatHijri(data.to)})`, C.headBg, {sz:10,bold:true,color:C.headFg}, cols, 24);
+  const r4 = r3 + 1; ws.getRow(r4).height = 26;
+  ['م','التاريخ الميلادي','التاريخ الهجري','اليوم','الحضور','الانصراف','المدة','الحالة'].forEach((h, i) =>
+    sc(ws.getCell(r4, i + 1), h, C.headBg, {sz:10,bold:true,color:C.headFg}, 'center', true));
+
+  let dr = r4 + 1;
+  data.days.forEach((d, i) => {
+    const even = i % 2 === 0;
+    ws.getRow(dr).height = 22;
+    const muted = d.status === 'off' || d.status === 'upcoming' || d.status === 'pending';
+    const rowFill = muted ? C.emptyBg : null;
+    dataCell(ws.getCell(dr, 1), i + 1,         even, 'center', false, rowFill);
+    dataCell(ws.getCell(dr, 2), d.greg,        even, 'center', false, rowFill);
+    dataCell(ws.getCell(dr, 3), d.hijri,       even, 'center', false, rowFill);
+    dataCell(ws.getCell(dr, 4), d.dayName,     even, 'center', false, rowFill);
+    dataCell(ws.getCell(dr, 5), d.checkIn  || '—', even, 'center', false, rowFill);
+    dataCell(ws.getCell(dr, 6), d.checkOut || '—', even, 'center', false, rowFill);
+    dataCell(ws.getCell(dr, 7), _rangeDurStr(d), even, 'center', d.status === 'present' && !!d.mins, d.status === 'present' && d.mins ? C.greenBg : rowFill);
+
+    let bg = rowFill, fg = '444444';
+    if (d.status === 'present')         { bg = d.offDay ? 'FEF3C7' : C.greenBg; fg = d.offDay ? '92400E' : C.greenFg; }
+    else if (d.status === 'absent')     { bg = C.redBg;   fg = C.redFg; }
+    else if (d.status === 'incomplete') { bg = C.amberBg; fg = C.amberFg; }
+    else if (d.status === 'off')        { bg = 'E8E8E8';  fg = '555555'; }
+    sc(ws.getCell(dr, 8), _rangeStatusLabel(d), bg || (even ? C.rowA : C.rowB), {sz:10,bold:true,color:fg}, 'center');
+    dr++;
+  });
+
+  // ── الإجماليات ──
+  ws.getRow(dr).height = 6; for (let c = 1; c <= cols; c++) ws.getCell(dr, c).fill = xFill(C.headBg); dr++;
+  const t = data.totals;
+  const summary = [
+    ['أيام الحضور',            `${t.presentDays} يوم`,               C.greenBg, C.greenFg],
+    ['أيام الغياب',            `${t.absentDays} يوم`,                C.redBg,   C.redFg],
+    ['إجمالي ساعات الحضور',    t.totalMins ? minsToStr(t.totalMins) : '—', C.greenBg, C.greenFg],
+    ['متوسط الحضور اليومي',    t.avgMins ? minsToStr(t.avgMins) : '—',     C.totalBg, C.headFg],
+  ];
+  summary.forEach(([label, val, bg, fg]) => {
+    ws.getRow(dr).height = 24;
+    ws.mergeCells(dr, 1, dr, 4);
+    sc(ws.getCell(dr, 1), label + ':', C.totalBg, {sz:10,bold:true,color:C.headFg}, 'right');
+    ws.mergeCells(dr, 5, dr, cols);
+    sc(ws.getCell(dr, 5), val, bg, {sz:10,bold:true,color:fg}, 'center');
+    dr++;
+  });
+  if (t.estimatedDays > 0) {
+    ws.getRow(dr).height = 22;
+    ws.mergeCells(dr, 1, dr, cols);
+    const c = ws.getCell(dr, 1);
+    c.value = `* ${t.estimatedDays} يوم بلا تسجيل انصراف — المدة تقديرية (٤ ساعات من وقت الحضور). صحّح الانصراف من «حضور المعلمين ← تصحيح الوقت» لتصبح دقيقة.`;
+    c.font = xFont({sz:9, color:'92400E'}); c.alignment = xAlign('right', 'middle', true);
+  }
+  return wb;
+}
+
+// Excel — تقرير معلم لفترة محددة
+app.get('/api/reports/teacher-range/:teacherId', async (req, res) => {
+  try {
+    const db = readDB();
+    const data = buildTeacherRangeData(db, req.params.teacherId, req.query.from, req.query.to);
+    if (data.error) return res.status(data.status || 400).json({ error: data.error });
+    const wb   = await buildTeacherRangeSheet(db, data);
+    const name = `تقرير-${(data.teacher.name || 'معلم').trim()}-${data.from}-إلى-${data.to}`;
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', arabicFilename(name));
+    await wb.xlsx.write(res);
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
+});
 // ── Endpoints التقارير ────────────────────────────────
 
 // Excel — كشف حضور يومي
@@ -4235,6 +4445,51 @@ app.get('/api/print/teacher-log/:date', (req, res) => {
   res.send(printPage(school, subtitle, body));
 });
 
+// ── تقرير معلم لفترة محددة (طباعة) ─────────────────────
+app.get('/api/print/teacher-range/:teacherId', (req, res) => {
+  const db   = readDB();
+  const data = buildTeacherRangeData(db, req.params.teacherId, req.query.from, req.query.to);
+  if (data.error) return res.status(data.status || 400).send(_rptEsc(data.error));
+  const school = db.settings.schoolName || 'حضور الحلقات';
+  const t = data.totals;
+  const subtitle = `تقرير حضور المعلم: ${_rptEsc(data.teacher.name || '—')} — من ${fmtGregorian(data.from)} إلى ${fmtGregorian(data.to)}`;
+
+  const rows = data.days.map((d, i) => {
+    const cls = d.status === 'present' ? (d.offDay ? 'a' : 'g')
+              : d.status === 'absent'  ? 'r'
+              : d.status === 'incomplete' ? 'a' : 's';
+    const muted = (d.status === 'off' || d.status === 'upcoming' || d.status === 'pending') ? 'color:#94a3b8;' : '';
+    return `<tr style="${muted}">
+      <td style="text-align:center;color:#94a3b8">${i+1}</td>
+      <td>${d.greg}</td>
+      <td style="font-size:11px">${d.hijri}</td>
+      <td>${d.dayName}</td>
+      <td style="text-align:center;font-weight:700;color:#1D4ED8">${d.checkIn||'—'}</td>
+      <td style="text-align:center;font-weight:700;color:#1D4ED8">${d.checkOut||'—'}</td>
+      <td style="text-align:center;font-weight:700">${_rangeDurStr(d)}</td>
+      <td style="text-align:center"><span class="badge ${cls}">${_rptEsc(_rangeStatusLabel(d))}</span></td>
+    </tr>`;
+  }).join('');
+
+  const stats = `<div class="stat-row">
+    <div class="stat g"><div class="n">${t.presentDays}</div><div class="l">أيام الحضور</div></div>
+    <div class="stat r"><div class="n">${t.absentDays}</div><div class="l">أيام الغياب</div></div>
+    <div class="stat p"><div class="n">${t.totalMins ? minsToStr(t.totalMins) : '—'}</div><div class="l">إجمالي الساعات</div></div>
+    <div class="stat b"><div class="n">${t.avgMins ? minsToStr(t.avgMins) : '—'}</div><div class="l">متوسط الحضور اليومي</div></div>
+  </div>`;
+
+  const note = t.estimatedDays > 0
+    ? `<p style="font-size:11px;color:#92400e;margin-bottom:10px">* ${t.estimatedDays} يوم بلا تسجيل انصراف — المدة تقديرية (٤ ساعات من وقت الحضور).</p>` : '';
+
+  const body = stats + `<table><thead><tr>
+    <th style="width:32px">م</th><th>التاريخ الميلادي</th><th>التاريخ الهجري</th><th style="width:70px">اليوم</th>
+    <th style="width:62px">الحضور</th><th style="width:62px">الانصراف</th><th style="width:70px">المدة</th><th style="width:100px">الحالة</th>
+  </tr></thead><tbody>${rows}</tbody></table>` + note;
+
+  res.setHeader('Content-Type','text/html; charset=utf-8');
+  res.send(printPage(school, subtitle, body));
+});
+
 // ── كشف الحضور الشهري (طلاب) ──────────────────────────
 app.get('/api/print/monthly-attendance/:year/:month', (req, res) => {
   const { year, month } = req.params;
@@ -4500,7 +4755,9 @@ app.get('/api/print/teachers-list', (req, res) => {
 // ── Teacher log API endpoint with hours (للعرض في التطبيق)
 app.get('/api/teacher-log/today-summary', (_, res) => {
   const db   = readDB();
-  const date = new Date().toISOString().split('T')[0];
+  // نفس منطقة المدرسة الزمنية المستخدمة في تسجيل الحضور — toISOString() يعيد تاريخ UTC
+  // فيُظهر ملخص "أمس" بين منتصف الليل والثالثة فجراً بتوقيت الرياض
+  const date = nowDate();
   const logs = db.teacherLog.filter(l=>l.date===date);
   const summary = logs.map(l => {
     const t = db.teachers.find(x=>x.id===l.teacherId);
